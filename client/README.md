@@ -1,36 +1,30 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Hostel Admission Portal
 
-## Getting Started
+## Seed the demo database
 
-First, run the development server:
+Configure `DATABASE_URL`, `DIRECT_URL`, `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_SERVICE_ROLE_KEY` in `.env`,
+then run:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npx prisma db seed
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+The seed creates 120 students, four hostels with 200 rooms, and staff accounts.
+It creates no student groups or room allotments, so the admission and allocation
+flow can be demonstrated from the beginning. Re-running the seed updates the
+same demo accounts and records.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### Demo logins
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+All seeded accounts use the password `HostelDemo2026!`.
 
-## Learn More
+| Role | Email |
+| --- | --- |
+| Admin | `admin@hostel-demo.edu` |
+| Warden | `warden@hostel-demo.edu` |
+| Male student | `aarav.sharma.2026bce1001@college.edu` |
+| Female student | `ananya.sharma.2026bce1061@college.edu` |
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+These shared demo credentials are for development and demonstrations only.
+Change them before using seeded accounts in a non-demo environment.
