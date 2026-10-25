@@ -1,0 +1,154 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum Role {
+  STUDENT
+  ADMIN
+  WARDEN
+}
+
+enum ApplicationStatus {
+  DRAFT
+  SUBMITTED
+  APPROVED
+  REJECTED
+}
+
+enum AllocationStatus {
+  PENDING
+  ALLOTTED
+  UNALLOTTED
+}
+
+enum RoomStatus {
+  AVAILABLE
+  OCCUPIED
+  RESERVED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+model User {
+  id             String   @id @default(uuid())
+  supabaseAuthId String   @unique
+  email          String   @unique
+  role           Role     @default(STUDENT)
+  createdAt      DateTime @default(now())
+  student        Student?
+}
+
+model Student {
+  id          String       @id @default(uuid())
+  userId      String       @unique
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name        String
+  rollNo      String       @unique
+  branch      String
+  year        Int
+  cgpa        Float
+  phone       String
+  gender      Gender
+  address     Json
+  application Application?
+  groupMember GroupMember?
+  allotment   Allotment?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+}
+
+model Hostel {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  gender    Gender
+  blocks    Block[]
+  createdAt DateTime @default(now())
+}
+
+model Block {
+  id       String @id @default(uuid())
+  name     String
+  hostelId String
+  hostel   Hostel @relation(fields: [hostelId], references: [id], onDelete: Cascade)
+  rooms    Room[]
+
+  @@unique([name, hostelId])
+}
+
+model Room {
+  id         String      @id @default(uuid())
+  roomNumber String
+  blockId    String
+  block      Block       @relation(fields: [blockId], references: [id], onDelete: Cascade)
+  floor      Int
+  capacity   Int         @default(4)
+  status     RoomStatus  @default(AVAILABLE)
+  x          Float       @default(0)
+  y          Float       @default(0)
+  width      Float       @default(80)
+  height     Float       @default(80)
+  allotments Allotment[]
+
+  @@unique([roomNumber, blockId])
+  @@index([status])
+  @@index([blockId])
+}
+
+model Application {
+  id           String            @id @default(uuid())
+  studentId    String            @unique
+  student      Student           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  status       ApplicationStatus @default(DRAFT)
+  documents    Json              @default("[]")
+  adminRemarks String?
+  submittedAt  DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+}
+
+model StudentGroup {
+  id                String           @id @default(uuid())
+  averageCgpa       Float            @default(0.0)
+  maxIndividualCgpa Float            @default(0.0)
+  isLocked          Boolean          @default(false)
+  preferences       String[]         @default([])
+  allocationStatus  AllocationStatus @default(PENDING)
+  members           GroupMember[]
+  allotments        Allotment[]
+  createdAt         DateTime         @default(now())
+}
+
+model GroupMember {
+  id        String       @id @default(uuid())
+  studentId String       @unique
+  student   Student      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  groupId   String
+  group     StudentGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  isLeader  Boolean      @default(false)
+
+  @@index([groupId])
+}
+
+model Allotment {
+  id         String        @id @default(uuid())
+  roomId     String
+  room       Room          @relation(fields: [roomId], references: [id], onDelete: Restrict)
+  studentId  String        @unique
+  student    Student       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  groupId    String?
+  group      StudentGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+  round      Int           @default(1)
+  allottedAt DateTime      @default(now())
+
+  @@index([roomId])
+  @@index([groupId])
+}
