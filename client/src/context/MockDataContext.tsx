@@ -247,7 +247,9 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: init?.body instanceof FormData
+      ? init.headers
+      : { 'Content-Type': 'application/json', ...init?.headers },
   })
   const payload: unknown = await response.json().catch(() => null)
   if (response.status === 401) {

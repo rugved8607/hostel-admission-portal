@@ -79,9 +79,10 @@ export async function saveDocument(
   const documents = application?.documents && typeof application.documents === 'object' && !Array.isArray(application.documents)
     ? application.documents as Prisma.JsonObject
     : {}
-  await prisma.application.update({
+  await prisma.application.upsert({
     where: { studentId },
-    data: { documents: { ...documents, [key]: metadata } },
+    create: { studentId, documents: { ...documents, [key]: metadata } },
+    update: { documents: { ...documents, [key]: metadata } },
   })
 
   return { key, metadata, signedUrl: await createDocumentSignedUrl(path) }
