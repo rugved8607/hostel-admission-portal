@@ -1,4 +1,5 @@
 import { connection, NextResponse, type NextRequest } from 'next/server'
+import { Prisma } from '@prisma/client'
 import { ZodError, type ZodType } from 'zod'
 import { ApiError } from '@/services/api-error'
 
@@ -14,6 +15,21 @@ export function apiRoute(handler: ApiHandler) {
         return NextResponse.json(
           { error: error.message, code: error.code },
           { status: error.status },
+        )
+      }
+
+      if (error instanceof Prisma.PrismaClientKnownRequestError) {
+        const code = error.code === 'P2002'
+          ? 'UNIQUE_CONFLICT'
+          : error.code === 'P2025'
+            ? 'NOT_FOUND'
+            : error.code === 'P2034'
+              ? 'TRANSACTION_CONFLICT'
+              : 'DATABASE_REQUEST_FAILED'
+        console.error('Prisma API error:', error)
+        return NextResponse.json(
+          { error: 'The request conflicts with existing data or could not be completed.', code },
+          { status: code === 'NOT_FOUND' ? 404 : 409 },
         )
       }
 

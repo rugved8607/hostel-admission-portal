@@ -92,7 +92,7 @@ function SectionAccordion({
   )
 }
 
-function DocFileRow({ label, doc, required }: { label: string; doc: DocumentMeta | null; required: boolean }) {
+function DocFileRow({ label, doc, required, documentKey, studentId }: { label: string; doc: DocumentMeta | null; required: boolean; documentKey: string; studentId: string }) {
   const isPdf = doc?.mimeType === 'application/pdf'
   return (
     <div className="flex items-center gap-3 py-2.5 border-b border-slate-100 last:border-0">
@@ -118,7 +118,12 @@ function DocFileRow({ label, doc, required }: { label: string; doc: DocumentMeta
       </div>
 
       {doc
-        ? <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0" />
+        ? <button translate="no" type="button" onClick={async () => {
+            const response = await fetch(`/api/admin/applications/${studentId}/documents?documentKey=${encodeURIComponent(documentKey)}`)
+            const payload = await response.json().catch(() => null) as { signedUrl?: string; error?: string } | null
+            if (!response.ok) throw new Error(payload?.error ?? 'Unable to open document.')
+            if (payload?.signedUrl) window.open(payload.signedUrl, '_blank', 'noopener,noreferrer')
+          }} className="text-[10px] font-semibold text-blue-700 hover:underline"><span>View</span></button>
         : required
           ? <XCircle size={14} className="text-red-400 flex-shrink-0" />
           : null}
@@ -326,13 +331,13 @@ export default function DocumentReviewDrawer({
 
             {/* Documents */}
             <SectionAccordion icon={Paperclip} title="Documents" defaultOpen>
-              <DocFileRow label="Government ID Card (Aadhaar)"       doc={app.documents.aadharCard}    required />
-              <DocFileRow label="Previous Semester Marksheet"         doc={app.documents.marksheet}     required />
-              <DocFileRow label="Hostel / Mess Fee Receipt"           doc={app.documents.feeReceipt}    required />
-              <DocFileRow label="Student ID Card"                     doc={app.documents.studentIdCard} required />
-              <DocFileRow label="Hostel ID Card"                      doc={app.documents.hostelIdCard}  required={false} />
+              <DocFileRow label="Government ID Card (Aadhaar)"       doc={app.documents.aadharCard}    required documentKey="govtPhotoId" studentId={student.id} />
+              <DocFileRow label="Previous Semester Marksheet"         doc={app.documents.marksheet}     required documentKey="semesterMarksheet" studentId={student.id} />
+              <DocFileRow label="Hostel / Mess Fee Receipt"           doc={app.documents.feeReceipt}    required documentKey="hostelFeeClearance" studentId={student.id} />
+              <DocFileRow label="Student ID Card"                     doc={app.documents.studentIdCard} required documentKey="studentIdentityCard" studentId={student.id} />
+              <DocFileRow label="Hostel ID Card"                      doc={app.documents.hostelIdCard}  required={false} documentKey="hostelIdCard" studentId={student.id} />
               {(app.documents.otherDocs ?? []).map((od) => (
-                <DocFileRow key={od.label} label={od.label} doc={od.file} required={false} />
+                <DocFileRow key={od.label} label={od.label} doc={od.file} required={false} documentKey="otherDocument" studentId={student.id} />
               ))}
               <p className="text-[11px] text-slate-400 mt-3 leading-relaxed">
                 Document preview requires backend file storage integration. File names and sizes shown are from submission metadata.

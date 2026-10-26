@@ -8,11 +8,14 @@ import { useMockData } from '@/context/MockDataContext';
 
 export default function StudentApplyPage() {
   const router = useRouter();
-  const { currentStudent, submitApplication, loading, error } = useMockData();
+  const { currentStudent, applications, submitApplication, uploadDocument, loading, error, refreshData } = useMockData();
   const [submitted, setSubmitted] = useState(false);
   const student = currentStudent;
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [documentStates, setDocumentStates] = useState<Record<string, 'Uploading' | 'Uploaded' | string>>({});
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
+  const application = applications.find((item) => item.studentId === currentStudent?.id)
 
   const [formData, setFormData] = useState({
     name: student?.name ?? '',
@@ -43,6 +46,19 @@ export default function StudentApplyPage() {
     }, 0);
     return () => window.clearTimeout(timeout);
   }, [student]);
+
+  const uploadFile = async (key: string, file: File) => {
+    setDocumentStates((current) => ({ ...current, [key]: 'Uploading' }))
+    setUploadErrors((current) => ({ ...current, [key]: '' }))
+    try {
+      await uploadDocument(key, file)
+      setDocumentStates((current) => ({ ...current, [key]: 'Uploaded' }))
+      await refreshData()
+    } catch (cause) {
+      setDocumentStates((current) => ({ ...current, [key]: 'Not uploaded' }))
+      setUploadErrors((current) => ({ ...current, [key]: cause instanceof Error ? cause.message : 'Upload failed.' }))
+    }
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -214,20 +230,30 @@ export default function StudentApplyPage() {
               <p className="text-xs text-slate-500 mb-3">Official scans verified against university student records.</p>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                {['Govt Photo ID', 'Semester Marksheet', 'Hostel Fee Clearance', 'Student Identity Card'].map((docName) => (
-                  <div key={docName} className="p-3 border border-slate-200 rounded-lg flex items-center justify-between bg-slate-50/50">
+                {[
+                  ['govtPhotoId', 'Govt Photo ID', application?.documents.aadharCard],
+                  ['semesterMarksheet', 'Semester Marksheet', application?.documents.marksheet],
+                  ['hostelFeeClearance', 'Hostel Fee Clearance', application?.documents.feeReceipt],
+                  ['studentIdentityCard', 'Student Identity Card', application?.documents.studentIdCard],
+                ].map(([key, docName, savedDocument]) => (
+                  <div key={String(key)} className="p-3 border border-slate-200 rounded-lg flex items-center justify-between bg-slate-50/50">
                     <div className="flex items-center space-x-2.5">
                       <FileText className="h-4 w-4 text-slate-400" />
                       <div>
-                        <span className="font-medium text-slate-800 block">{docName}</span>
+                        <span className="font-medium text-slate-800 block">{String(docName)}</span>
                         <span className="text-[10px] text-slate-500 font-mono flex items-center mt-0.5">
-                          Not uploaded
+                          {documentStates[String(key)] ?? (savedDocument ? 'Uploaded' : 'Not uploaded')}
                         </span>
+                        {uploadErrors[String(key)] && <span className="mt-1 block max-w-44 text-[10px] text-red-600">{uploadErrors[String(key)]}</span>}
                       </div>
                     </div>
-                    <span className="text-[10px] bg-white border border-slate-200 px-2 py-0.5 rounded text-slate-500 font-mono">
-                      Required
-                    </span>
+                    <label translate="no" className="cursor-pointer text-[10px] bg-white border border-slate-200 px-2 py-1 rounded text-slate-600 font-mono">
+                      <span>{documentStates[String(key)] === 'Uploading' ? 'Uploading...' : savedDocument ? 'Replace' : 'Required'}</span>
+                      <input type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" disabled={documentStates[String(key)] === 'Uploading'} onChange={(event) => {
+                        const file = event.target.files?.[0]
+                        if (file) void uploadFile(String(key), file)
+                      }} />
+                    </label>
                   </div>
                 ))}
               </div>

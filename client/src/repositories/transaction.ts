@@ -10,6 +10,8 @@ export async function serializableTransaction<T>(
   return retrySerializable(() =>
     prisma.$transaction(operation, {
       isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+      maxWait: 15_000,
+      timeout: 60_000,
     }),
   )
 }

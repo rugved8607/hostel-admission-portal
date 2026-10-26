@@ -105,6 +105,7 @@ export default function AdminAllocationPage() {
               Refresh
             </button>
             <button
+              translate="no"
               type="button"
               disabled={isProcessing || currentRoundStatus !== 'FORMATION_CLOSED'}
               onClick={() => void perform(`Executing allocation for Round ${currentRound}`, runAllocationRound)}
@@ -113,7 +114,7 @@ export default function AdminAllocationPage() {
               {isProcessing
                 ? <RefreshCw className="h-3.5 w-3.5 animate-spin" />
                 : <Play className="h-3.5 w-3.5" />}
-              Run Allocation
+              <span>Run Allocation</span>
             </button>
           </div>
         </header>

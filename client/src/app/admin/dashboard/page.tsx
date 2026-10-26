@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { 
   FileText, 
   Users, 
@@ -14,8 +15,17 @@ import {
 } from 'lucide-react';
 import { useMockData } from '@/context/MockDataContext';
 
-export default function StudentDashboardPage() {
-  const { currentStudent, groups, rooms } = useMockData();
+export default function AdminDashboardPage() {
+  const router = useRouter();
+  const { session, currentStudent, groups, rooms, isHydrated, loading, error, refreshData } = useMockData();
+
+  if (!isHydrated) return <div className="min-h-screen flex items-center justify-center text-xs text-slate-500">Loading admin session...</div>;
+  if (session?.role !== 'admin') {
+    router.replace('/admin/login');
+    return null;
+  }
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-xs text-slate-500">Loading admin dashboard...</div>;
+  if (error) return <div className="min-h-screen flex items-center justify-center p-4"><div className="rounded border border-red-200 bg-red-50 p-4 text-xs text-red-700"><p>{error}</p><button type="button" onClick={() => void refreshData()} className="mt-2 font-semibold underline">Retry</button></div></div>;
 
   if (!currentStudent) {
     return (

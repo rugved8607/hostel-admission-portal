@@ -1,5 +1,6 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { findUserByAuthId } from '@/repositories/user-repository'
 
 export async function updateSession(request: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -49,7 +50,8 @@ export async function updateSession(request: NextRequest) {
     return NextResponse.redirect(new URL('/', request.url))
   }
 
-  const role = String(user.app_metadata?.role ?? '').toUpperCase()
+  const portalUser = await findUserByAuthId(user.id)
+  const role = portalUser?.role
   const canAccessRoute = isAdminRoute
     ? role === 'ADMIN' || role === 'WARDEN'
     : role === 'STUDENT'

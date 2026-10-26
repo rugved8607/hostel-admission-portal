@@ -14,6 +14,7 @@ import { createClient } from '@/utils/supabase/client'
 import type {
   Application,
   AuthSession,
+  DocumentMeta,
   GroupMember,
   Room,
   StudentGroup,
@@ -67,6 +68,7 @@ interface MockDataContextValue {
     phone: string
     address: { street: string; city: string; state: string; pincode: string }
   }) => Promise<void>
+  uploadDocument: (key: string, file: File) => Promise<{ metadata: DocumentMeta; signedUrl: string }>
   createOrJoinGroup: (studentId: string, targetGroupId: string) => Promise<{ success: boolean; message: string }>
   createGroup: (studentId: string, maxSize: number) => Promise<{ success: boolean; error?: string }>
   joinGroup: (groupId: string, studentId: string) => Promise<{ success: boolean; error?: string }>
@@ -224,10 +226,10 @@ function mapApplication(student: StudentProfile, payload?: unknown): Application
       activeBacklogs: '0',
     },
     documents: {
-      aadharCard: null,
-      marksheet: null,
-      feeReceipt: null,
-      studentIdCard: null,
+      aadharCard: mapDocument(documents.govtPhotoId),
+      marksheet: mapDocument(documents.semesterMarksheet),
+      feeReceipt: mapDocument(documents.hostelFeeClearance),
+      studentIdCard: mapDocument(documents.studentIdentityCard),
       hostelIdCard: null,
       otherDocs: [],
     },
@@ -248,6 +250,13 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { 'Content-Type': 'application/json', ...init?.headers },
   })
   const payload: unknown = await response.json().catch(() => null)
+  if (response.status === 401) {
+    if (typeof window !== 'undefined') {
+      const login = window.location.pathname.startsWith('/admin') ? '/admin/login' : '/'
+      window.location.assign(login)
+    }
+    throw new Error('Session expired. Please sign in again.')
+  }
   if (!response.ok) {
     const value = object(payload)
     const error = new Error(
@@ -257,6 +266,14 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw error
   }
   return payload as T
+}
+
+function mapDocument(value: unknown): DocumentMeta | null {
+  const document = object(value)
+  if (typeof document.name !== 'string' || typeof document.mimeType !== 'string' || typeof document.sizeBytes !== 'number') {
+    return null
+  }
+  return { name: document.name, mimeType: document.mimeType, sizeBytes: document.sizeBytes }
 }
 
 async function post(path: string, body?: unknown) {
@@ -512,6 +529,17 @@ export function MockDataProvider({ children }: { children: ReactNode }) {
     setSession(null)
   }, [])
 
+  const uploadDocument = useCallback(async (key: string, file: File) => {
+    const form = new FormData()
+    form.append('documentKey', key)
+    form.append('file', file)
+    return api<{ metadata: DocumentMeta; signedUrl: string }>('/api/applications/me/documents', {
+      method: 'POST',
+      body: form,
+      headers: {},
+    })
+  }, [])
+
   const refreshAfterMutation = useCallback(async () => {
     await refreshData()
   }, [refreshData])
@@ -686,6 +714,7 @@ export function MockDataProvider({ children }: { children: ReactNode }) {
     refreshData,
     updateApplicationStatus,
     submitApplication,
+    uploadDocument,
     createOrJoinGroup,
     createGroup,
     joinGroup,

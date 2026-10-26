@@ -91,6 +91,11 @@ export async function listUnallotted(request: NextRequest) {
   return rounds.listUnallottedStudents()
 }
 
+export async function listRooms(request: NextRequest) {
+  await adminActor(request)
+  return rounds.listRooms()
+}
+
 export async function listAvailableRooms(request: NextRequest) {
   await adminActor(request)
   return rounds.listAvailableRooms()

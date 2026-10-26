@@ -82,6 +82,9 @@ export async function createRoundDraft(
   return serializableTransaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(781239412)`
     const latest = await tx.allocationRound.findFirst({ orderBy: { number: 'desc' } })
+    if (latest?.status === RoundStatus.DRAFT) {
+      return latest
+    }
     if (latest &&
         latest.status !== RoundStatus.PUBLISHED &&
         latest.status !== RoundStatus.CLOSED) {
@@ -130,6 +133,9 @@ export async function updateRoundSettings(
 export async function openRound(roundId: string, actorId: string) {
   return serializableTransaction(async (tx) => {
     const round = await lockRound(tx, roundId)
+    if (round.status === RoundStatus.FORMATION_OPEN) {
+      return tx.allocationRound.findUniqueOrThrow({ where: { id: roundId } })
+    }
     if (round.status !== RoundStatus.DRAFT) {
       throw new ApiError(409, 'INVALID_ROUND_STATE', 'Only a draft round can be opened.')
     }
@@ -177,8 +183,9 @@ export async function allocateRound(roundId: string, actorId: string) {
     `
     const groupIds = groupLocks.map((group) => group.id)
     if (groupIds.length) {
-      await tx.$queryRaw<{ id: string }[]>`
-        SELECT "id" FROM "Student"
+      await tx.$executeRaw`
+        SELECT pg_advisory_xact_lock(hashtextextended("id"::text, 0))
+        FROM "Student"
         WHERE "id" IN (
           SELECT "studentId" FROM "GroupMember" WHERE "groupId" IN (${Prisma.join(groupIds)})
         )
@@ -189,6 +196,11 @@ export async function allocateRound(roundId: string, actorId: string) {
       SELECT "id" FROM "Room"
       WHERE "status" = 'AVAILABLE' AND "allottedGroupId" IS NULL
       ORDER BY "id" FOR UPDATE
+    `
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtextextended("id", 0))
+      FROM "Room"
+      WHERE "status" = 'AVAILABLE' AND "allottedGroupId" IS NULL
     `
     const groups = await tx.studentGroup.findMany({
       where: { id: { in: groupIds } },
@@ -290,6 +302,9 @@ export async function allocateRound(roundId: string, actorId: string) {
 export async function publishRound(roundId: string, actorId: string) {
   return serializableTransaction(async (tx) => {
     const round = await lockRound(tx, roundId)
+    if (round.status === RoundStatus.PUBLISHED || round.status === RoundStatus.CLOSED) {
+      return tx.allocationRound.findUniqueOrThrow({ where: { id: roundId } })
+    }
     if (round.status !== RoundStatus.ALLOCATED) {
       throw new ApiError(409, 'INVALID_ROUND_STATE', 'Only an allocated round can be published.')
     }
@@ -338,12 +353,16 @@ export async function cancelAllotment(roundId: string, groupId: string, actorId:
     }
     const studentIds = group.members.map((member) => member.studentId)
     if (studentIds.length) {
-      await tx.$queryRaw<{ id: string }[]>`
-        SELECT "id" FROM "Student" WHERE "id" IN (${Prisma.join(studentIds)}) ORDER BY "id" FOR UPDATE
+      await tx.$executeRaw`
+        SELECT pg_advisory_xact_lock(hashtextextended("id"::text, 0))
+        FROM "Student"
+        WHERE "id" IN (${Prisma.join(studentIds)})
+        ORDER BY "id"
       `
     }
-    await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "Room" WHERE "id" = ${group.room.id} FOR UPDATE
+    await tx.$executeRaw`
+      SELECT pg_advisory_xact_lock(hashtextextended("id"::text, 0))
+      FROM "Room" WHERE "id" = ${group.room.id}
     `
     await tx.allotment.deleteMany({ where: { groupId, roundId } })
     await tx.room.update({
@@ -393,6 +412,18 @@ export async function listUnallottedStudents() {
     outcome: snapshots.find((snapshot) => snapshot.groupId === group.id) ?? null,
     nextStep: 'Members may leave and reform into a group of 3 or 4 in the next round.',
   }))
+}
+
+export async function listRooms() {
+  return prisma.room.findMany({
+    include: { block: { include: { hostel: true } } },
+    orderBy: [
+      { block: { hostel: { name: 'asc' } } },
+      { block: { name: 'asc' } },
+      { floor: 'asc' },
+      { roomNumber: 'asc' },
+    ],
+  })
 }
 
 export async function listAvailableRooms() {

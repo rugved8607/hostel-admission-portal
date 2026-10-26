@@ -14,6 +14,7 @@ function transactionClient(
 ) {
   const tx = {
     $queryRaw: vi.fn(async () => queries.shift() ?? []),
+    $executeRaw: vi.fn(async () => 0),
     allotment: {
       findUnique: vi.fn(),
       deleteMany: vi.fn(),
@@ -214,6 +215,7 @@ describe('transactional group and allotment workflows', () => {
         if (sql.includes('"Room"')) return [{ id: 'room-1' }]
         return []
       }),
+      $executeRaw: vi.fn(async () => 0),
       studentGroup: {
         findMany: vi.fn().mockResolvedValue([{
           id: 'group-1',

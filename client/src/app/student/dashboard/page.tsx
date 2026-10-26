@@ -2,6 +2,7 @@
 
 import React from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { 
   FileText, 
   Users, 
@@ -15,8 +16,16 @@ import {
 import { useMockData } from '@/context/MockDataContext';
 
 export default function StudentDashboardPage() {
-  const { currentStudent, groups, rooms } = useMockData();
+  const router = useRouter();
+  const { session, currentStudent, groups, rooms, isHydrated, loading, error, refreshData } = useMockData();
 
+  if (!isHydrated) return <div className="min-h-screen flex items-center justify-center text-xs text-slate-500">Loading your student session...</div>;
+  if (session?.role !== 'student') {
+    router.replace('/');
+    return null;
+  }
+  if (loading) return <div className="min-h-screen flex items-center justify-center text-xs text-slate-500">Loading student dashboard...</div>;
+  if (error) return <div className="min-h-screen flex items-center justify-center p-4"><div className="rounded border border-red-200 bg-red-50 p-4 text-xs text-red-700"><p>{error}</p><button type="button" onClick={() => void refreshData()} className="mt-2 font-semibold underline">Retry</button></div></div>;
   if (!currentStudent) {
     return (
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">

@@ -123,7 +123,7 @@ export default function LoginPage() {
                 type="text"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
-                placeholder={isStudent ? 'e.g. aarav.sharma@college.edu or 21BCE1042' : 'e.g. admin@vjti.ac.in'}
+                placeholder={isStudent ? 'e.g. aarav.sharma.2026bce1001@college.edu or 2026BCE1001' : 'e.g. admin@hostel-demo.edu'}
                 autoComplete="username"
                 className="w-full px-3 py-2.5 border border-slate-300 rounded-lg text-sm text-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
               />
@@ -191,26 +191,19 @@ export default function LoginPage() {
             <p className="text-xs font-semibold text-amber-800 mb-1">
               Demo Credentials
             </p>
-            {isStudent ? (
-              <p className="text-xs text-amber-700 font-mono leading-5">
-                Email: aarav.sharma@college.edu<br />
-                Roll#: 21BCE1042<br />
-                Password: student123
-              </p>
-            ) : (
-              <p className="text-xs text-amber-700 font-mono leading-5">
-                Email: admin@vjti.ac.in<br />
-                Password: admin123
-              </p>
-            )}
+            <p className="text-xs text-amber-700 font-mono leading-5">
+              {isStudent
+                ? 'Email: aarav.sharma.2026bce1001@college.edu'
+                : 'Email: admin@hostel-demo.edu'}<br />
+              Password: HostelDemo2026!
+            </p>
           </div>
         </div>
 
         {/* Footer */}
         <div className="px-6 pb-5 text-center">
           <p className="text-xs text-slate-400">
-            This portal uses mock data for demonstration purposes only.
-            <br />No real authentication or data storage is performed.
+            Authenticated access to the hostel admission portal.
           </p>
         </div>
       </div>

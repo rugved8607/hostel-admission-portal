@@ -1,6 +1,7 @@
 import { ApplicationStatus, Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { ApiError } from '@/services/api-error'
+import { serializableTransaction } from '@/repositories/transaction'
 
 interface ApplicationSubmission {
   phone: string
@@ -13,7 +14,7 @@ interface ApplicationSubmission {
 }
 
 export async function submitApplication(userId: string, input: ApplicationSubmission) {
-  return prisma.$transaction(async (tx) => {
+  return serializableTransaction(async (tx) => {
     const student = await tx.student.findUnique({
       where: { userId },
       include: { application: true, allotment: { select: { id: true } } },
@@ -89,7 +90,7 @@ export async function updateApplication(
   status: 'under_review' | 'approved' | 'rejected' | 'correction_required',
   options: { adminRemarks?: string; correctionNotes?: string; verifiedCgpa?: number },
 ) {
-  return prisma.$transaction(async (tx) => {
+  return serializableTransaction(async (tx) => {
     const student = await tx.student.findUnique({
       where: { id: studentId },
       include: { application: true },
