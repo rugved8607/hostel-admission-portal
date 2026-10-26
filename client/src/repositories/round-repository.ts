@@ -53,7 +53,16 @@ export async function getRound(roundId: string) {
     include: {
       snapshots: { orderBy: { rank: 'asc' } },
       groups: {
-        where: { status: { in: [GroupStatus.SUBMITTED, GroupStatus.ALLOTTED, GroupStatus.UNALLOTTED] } },
+        where: {
+          status: {
+            in: [
+              GroupStatus.FORMING,
+              GroupStatus.SUBMITTED,
+              GroupStatus.ALLOTTED,
+              GroupStatus.UNALLOTTED,
+            ],
+          },
+        },
         include: {
           members: { include: { student: { select: { id: true, name: true, rollNo: true, cgpa: true, gender: true } } } },
           room: { include: { block: { include: { hostel: true } } } },
@@ -71,7 +80,7 @@ export async function createRoundDraft(
   actorId: string,
 ) {
   return serializableTransaction(async (tx) => {
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(781239412)`
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(781239412)`
     const latest = await tx.allocationRound.findFirst({ orderBy: { number: 'desc' } })
     if (latest &&
         latest.status !== RoundStatus.PUBLISHED &&

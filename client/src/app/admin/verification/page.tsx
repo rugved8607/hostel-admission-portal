@@ -141,7 +141,7 @@ type JoinedRow = Application & { student: Student | undefined }
 
 export default function AdminVerificationPage() {
   const router = useRouter()
-  const { session, applications, students, logout, isHydrated } = useMockData()
+  const { session, applications, students, logout, isHydrated, loading, error, refreshData } = useMockData()
 
   // Auth guard
   useEffect(() => {
@@ -229,7 +229,7 @@ export default function AdminVerificationPage() {
             <div className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
               <AlertCircle size={12} className="text-amber-600" />
               <span className="text-[11px] text-amber-700 font-medium">
-                Demonstration Mode — Changes are in-memory only
+                Database-backed application review
               </span>
             </div>
           </header>
@@ -243,6 +243,13 @@ export default function AdminVerificationPage() {
                 Review submitted applications, verify documents, and approve or reject applicants.
               </p>
             </div>
+            {error && (
+              <div className="flex items-center justify-between rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+                <span>{error}</span>
+                <button type="button" onClick={() => void refreshData()} className="font-semibold underline">Retry</button>
+              </div>
+            )}
+            {loading && <p className="text-xs text-slate-500">Loading applications…</p>}
 
             {/* Stat cards */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
@@ -292,7 +299,11 @@ export default function AdminVerificationPage() {
 
             {/* Table */}
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-              {filteredRows.length === 0 ? (
+              {loading ? (
+                <div className="flex items-center justify-center py-16 text-xs text-slate-400">
+                  Loading applications…
+                </div>
+              ) : filteredRows.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-2">
                   <Filter size={28} strokeWidth={1.5} />
                   <p className="text-sm font-medium">No applications match the current filter.</p>

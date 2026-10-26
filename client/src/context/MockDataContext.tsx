@@ -9,11 +9,11 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { INITIAL_GROUPS, INITIAL_ROOMS, INITIAL_STUDENTS } from '@/lib/mock-data'
+import type { RoundStatus, TieBreakRule } from '@prisma/client'
+import { createClient } from '@/utils/supabase/client'
 import type {
   Application,
   AuthSession,
-  DocumentAttachment,
   GroupMember,
   Room,
   StudentGroup,
@@ -21,6 +21,15 @@ import type {
   StudentStatus,
   UpdateApplicationOptions,
 } from '@/lib/types'
+
+interface ApiFailure extends Error {
+  code?: string
+}
+
+interface GroupStatusPayload {
+  group: Record<string, unknown> | null
+  allocation: { status: string; nextStep: string | null }
+}
 
 interface MockDataContextValue {
   session: AuthSession | null
@@ -32,580 +41,621 @@ interface MockDataContextValue {
   currentRound: number
   isHydrated: boolean
   groupsPublished: boolean
-  loginAsStudent: (identifier: string, password: string) => { success: boolean; error?: string }
-  loginAsAdmin: (identifier: string, password: string) => { success: boolean; error?: string }
-  loginStudent: (identifier: string) => void
-  logout: () => void
+  loading: boolean
+  error: string | null
+  allocationStatus: { status: string; nextStep: string | null } | null
+  currentRoundId: string | null
+  currentRoundStatus: RoundStatus | null
+  currentRoundDeadline: string
+  currentTieBreakRule: TieBreakRule
+  roundHistory: Array<Record<string, unknown>>
+  openGroups: StudentGroup[]
+  unallottedStudents: Array<Record<string, unknown>>
+  auditLog: Array<Record<string, unknown>>
+  availableRooms: Array<Record<string, unknown>>
+  loginAsStudent: (identifier: string, password: string) => Promise<{ success: boolean; error?: string }>
+  loginAsAdmin: (identifier: string, password: string) => Promise<{ success: boolean; error?: string }>
+  loginStudent: (identifier: string) => Promise<void>
+  logout: () => Promise<void>
+  refreshData: () => Promise<void>
   updateApplicationStatus: (
     id: string,
     status: StudentStatus,
     options?: UpdateApplicationOptions | string
-  ) => void
-  createOrJoinGroup: (studentId: string, targetRollNo: string) => { success: boolean; message: string }
-  createGroup: (studentId: string, maxSize: number) => { success: boolean; error?: string }
-  joinGroup: (inviteCode: string, studentId: string) => { success: boolean; error?: string }
-  leaveGroup: (studentId: string) => { success: boolean; error?: string }
-  lockGroup: (groupId: string) => { success: boolean; error?: string }
-  savePreferences: (groupId: string, preferences: string[]) => void
-  runAllocationRound: () => void
+  ) => Promise<void>
+  submitApplication: (input: {
+    phone: string
+    address: { street: string; city: string; state: string; pincode: string }
+  }) => Promise<void>
+  createOrJoinGroup: (studentId: string, targetGroupId: string) => Promise<{ success: boolean; message: string }>
+  createGroup: (studentId: string, maxSize: number) => Promise<{ success: boolean; error?: string }>
+  joinGroup: (groupId: string, studentId: string) => Promise<{ success: boolean; error?: string }>
+  leaveGroup: (studentId: string) => Promise<{ success: boolean; error?: string }>
+  dissolveGroup: (groupId: string) => Promise<{ success: boolean; error?: string }>
+  lockGroup: (groupId: string) => Promise<{ success: boolean; error?: string }>
+  savePreferences: (groupId: string, preferences: string[]) => Promise<void>
+  runAllocationRound: () => Promise<void>
+  createRound: (deadline: string, tieBreakRule: TieBreakRule) => Promise<void>
+  updateRoundSettings: (deadline: string, tieBreakRule: TieBreakRule) => Promise<void>
+  openRound: () => Promise<void>
+  closeFormation: () => Promise<void>
+  publishRound: () => Promise<void>
+  closeRound: () => Promise<void>
+  cancelAllotment: (groupId: string, reason: string) => Promise<void>
   resetAllData: () => void
 }
 
 const MockDataContext = createContext<MockDataContextValue | null>(null)
-const STORAGE_KEY = 'hostel_portal_state'
-const DEFAULT_STUDENT_ID = INITIAL_STUDENTS[0]?.id ?? ''
+const supabase = createClient()
 
-function statusForApplication(status: StudentStatus): StudentStatus {
-  if (status === 'submitted') return 'application_submitted'
-  if (status === 'draft') return 'application_draft'
-  return status
+function object(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
 }
 
-function documentMeta(name: string, verified: boolean) {
-  return verified ? { name, mimeType: 'application/pdf', sizeBytes: 0 } : null
-}
-
-function createApplications(students: StudentProfile[]): Application[] {
-  return students.map((student) => {
-    const docs = student.documents ?? []
-    return {
-      id: `app_${student.id}`,
-      studentId: student.id,
-      personal: {
-        fullName: student.name,
-        rollNumber: student.rollNo,
-        branch: student.branch,
-        year: String(student.year),
-        phone: student.phone,
-        email: student.email,
-        parentName: '',
-        parentPhone: '',
-      },
-      address: {
-        permanentAddress: student.address.street,
-        city: student.address.city,
-        state: student.address.state,
-        pincode: student.address.pincode,
-      },
-      academic: {
-        selfReportedCgpa: String(student.cgpa),
-        previousSemPercentage: '',
-        activeBacklogs: '0',
-      },
-      documents: {
-        aadharCard: documentMeta(docs[0]?.name ?? 'Government ID', Boolean(docs[0])),
-        marksheet: documentMeta(docs[1]?.name ?? 'Semester Marksheet', Boolean(docs[1])),
-        feeReceipt: documentMeta(docs[2]?.name ?? 'Hostel Fee Clearance', Boolean(docs[2])),
-        studentIdCard: documentMeta(docs[3]?.name ?? 'Student Identity Card', Boolean(docs[3])),
-        hostelIdCard: null,
-        otherDocs: [],
-      },
-      status: statusForApplication(student.status),
-      submittedAt: student.status === 'submitted' ? '2025-01-15T12:00:00.000Z' : null,
-      adminRemarks: student.adminRemarks ?? '',
-      correctionNotes: '',
-      verifiedCgpa: student.status === 'approved' ? student.cgpa : null,
-      verifiedBy: student.status === 'approved' ? 'Admin' : null,
-      verifiedAt: null,
-    }
-  })
-}
-
-function makeMember(student: StudentProfile, isHead = false): GroupMember {
-  return {
-    studentId: student.id,
-    name: student.name,
-    rollNo: student.rollNo,
-    rollNumber: student.rollNo,
-    branch: student.branch,
-    year: student.year,
-    cgpa: student.cgpa,
-    verifiedCgpa: student.cgpa,
-    isLeader: isHead,
-    isHead,
-    joinedAt: new Date().toISOString(),
+function mapStatus(status: unknown): StudentStatus {
+  switch (status) {
+    case 'APPROVED': return 'approved'
+    case 'SUBMITTED': return 'application_submitted'
+    case 'REJECTED': return 'rejected'
+    default: return 'draft'
   }
 }
 
-function averageCgpa(members: GroupMember[]): number {
-  if (members.length === 0) return 0
-  return Number((members.reduce((sum, member) => sum + member.verifiedCgpa, 0) / members.length).toFixed(2))
+function mapStudent(payload: unknown): StudentProfile {
+  const value = object(payload)
+  const address = object(value.address)
+  const application = object(value.application)
+  const user = object(value.user)
+  return {
+    id: String(value.id ?? ''),
+    name: String(value.name ?? ''),
+    rollNo: String(value.rollNo ?? ''),
+    email: String(user.email ?? ''),
+    branch: String(value.branch ?? ''),
+    year: Number(value.year ?? 1),
+    cgpa: Number(value.cgpa ?? 0),
+    phone: String(value.phone ?? ''),
+    address: {
+      street: String(address.street ?? ''),
+      city: String(address.city ?? ''),
+      state: String(address.state ?? ''),
+      pincode: String(address.pincode ?? ''),
+    },
+    status: object(application.documents).applicationStatusOverride === 'correction_required'
+      ? 'correction_required'
+      : object(application.documents).applicationStatusOverride === 'under_review'
+        ? 'under_review'
+        : mapStatus(application.status),
+    adminRemarks: typeof application.adminRemarks === 'string' ? application.adminRemarks : undefined,
+  }
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null
+function mapRoom(payload: unknown): Room {
+  const value = object(payload)
+  const block = object(value.block)
+  const hostel = object(block.hostel)
+  const status = String(value.status ?? 'AVAILABLE').toLowerCase()
+  return {
+    id: String(value.id ?? ''),
+    roomNumber: String(value.roomNumber ?? ''),
+    block: String(block.name ?? 'A') as Room['block'],
+    floor: Number(value.floor ?? 1),
+    capacity: Number(value.capacity ?? 4),
+    status: status === 'occupied' || status === 'reserved' ? status : 'available',
+    allottedGroupId: typeof value.allottedGroupId === 'string' ? value.allottedGroupId : undefined,
+    x: Number(value.x ?? 0),
+    y: Number(value.y ?? 0),
+    width: Number(value.width ?? 80),
+    height: Number(value.height ?? 80),
+    hostelId: String(hostel.id ?? ''),
+    hostelName: String(hostel.name ?? ''),
+  }
 }
 
-function isStudentStatus(value: unknown): value is StudentStatus {
-  return typeof value === 'string' && [
-    'draft',
-    'submitted',
-    'not_applied',
-    'application_draft',
-    'application_submitted',
-    'under_review',
-    'approved',
-    'rejected',
-    'correction_required',
-  ].includes(value)
-}
-
-function normalizeStudents(value: unknown): StudentProfile[] {
-  if (!Array.isArray(value)) return INITIAL_STUDENTS
-  return INITIAL_STUDENTS.map((initial) => {
-    const saved = value.find((entry) => isRecord(entry) && entry.id === initial.id)
-    if (!isRecord(saved)) return initial
-    const savedAddress = isRecord(saved.address) ? saved.address : {}
+function mapGroup(payload: unknown): StudentGroup {
+  const value = object(payload)
+  const members = Array.isArray(value.members) ? value.members : []
+  const mappedMembers: GroupMember[] = members.map((payloadMember) => {
+    const member = object(payloadMember)
+    const student = object(member.student)
     return {
-      ...initial,
-      name: typeof saved.name === 'string' ? saved.name : initial.name,
-      rollNo: typeof saved.rollNo === 'string' ? saved.rollNo : initial.rollNo,
-      email: typeof saved.email === 'string' ? saved.email : initial.email,
-      branch: typeof saved.branch === 'string' ? saved.branch : initial.branch,
-      year: typeof saved.year === 'number' ? saved.year : initial.year,
-      cgpa: typeof saved.cgpa === 'number' ? saved.cgpa : initial.cgpa,
-      phone: typeof saved.phone === 'string' ? saved.phone : initial.phone,
-      address: {
-        street: typeof savedAddress.street === 'string' ? savedAddress.street : initial.address.street,
-        city: typeof savedAddress.city === 'string' ? savedAddress.city : initial.address.city,
-        state: typeof savedAddress.state === 'string' ? savedAddress.state : initial.address.state,
-        pincode: typeof savedAddress.pincode === 'string' ? savedAddress.pincode : initial.address.pincode,
-      },
-      status: isStudentStatus(saved.status) ? saved.status : initial.status,
-      groupId: typeof saved.groupId === 'string' ? saved.groupId : undefined,
-      adminRemarks: typeof saved.adminRemarks === 'string' ? saved.adminRemarks : undefined,
-      documents: Array.isArray(saved.documents)
-        ? saved.documents.filter((document): document is DocumentAttachment =>
-            isRecord(document) && typeof document.name === 'string' &&
-            typeof document.url === 'string' && typeof document.verified === 'boolean')
-        : initial.documents,
+      studentId: String(student.id ?? ''),
+      name: String(student.name ?? ''),
+      rollNo: String(student.rollNo ?? ''),
+      rollNumber: String(student.rollNo ?? ''),
+      branch: String(student.branch ?? ''),
+      year: Number(student.year ?? 1),
+      cgpa: Number(student.cgpa ?? 0),
+      verifiedCgpa: Number(student.cgpa ?? 0),
+      isLeader: member.isLeader === true,
+      isHead: member.isLeader === true,
     }
   })
-}
-
-function normalizeRooms(value: unknown): Room[] {
-  if (!Array.isArray(value)) return INITIAL_ROOMS
-  return INITIAL_ROOMS.map((initial) => {
-    const saved = value.find((entry) => isRecord(entry) && entry.id === initial.id)
-    if (!isRecord(saved)) return initial
-    return {
-      ...initial,
-      roomNumber: typeof saved.roomNumber === 'string' ? saved.roomNumber : initial.roomNumber,
-      block: saved.block === 'A' || saved.block === 'B' ? saved.block : initial.block,
-      floor: typeof saved.floor === 'number' ? saved.floor : initial.floor,
-      capacity: typeof saved.capacity === 'number' ? saved.capacity : initial.capacity,
-      status: saved.status === 'available' || saved.status === 'occupied' || saved.status === 'reserved'
-        ? saved.status
-        : initial.status,
-      allottedGroupId: typeof saved.allottedGroupId === 'string' ? saved.allottedGroupId : undefined,
-    }
-  })
-}
-
-function normalizeGroups(value: unknown, students: StudentProfile[]): StudentGroup[] {
-  if (!Array.isArray(value)) return INITIAL_GROUPS
-  return value.flatMap((entry): StudentGroup[] => {
-    if (!isRecord(entry) || typeof entry.id !== 'string') return []
-    const leaderId = typeof entry.headStudentId === 'string'
-      ? entry.headStudentId
-      : typeof entry.leaderId === 'string'
-        ? entry.leaderId
-        : ''
-    const rawMembers = Array.isArray(entry.members) ? entry.members : []
-    const members = rawMembers.flatMap((rawMember): GroupMember[] => {
-      if (!isRecord(rawMember) || typeof rawMember.studentId !== 'string') return []
-      const profile = students.find((student) => student.id === rawMember.studentId)
-      if (!profile) return []
-      const head = rawMember.studentId === leaderId ||
-        rawMember.isHead === true ||
-        rawMember.isLeader === true
-      const member = makeMember(profile, head)
-      return [{
-        ...member,
-        name: typeof rawMember.name === 'string' ? rawMember.name : member.name,
-        rollNo: typeof rawMember.rollNo === 'string' ? rawMember.rollNo : member.rollNo,
-        rollNumber: typeof rawMember.rollNumber === 'string'
-          ? rawMember.rollNumber
-          : typeof rawMember.rollNo === 'string'
-            ? rawMember.rollNo
-            : member.rollNumber,
-        branch: typeof rawMember.branch === 'string' ? rawMember.branch : member.branch,
-        year: typeof rawMember.year === 'number' ? rawMember.year : member.year,
-        cgpa: typeof rawMember.cgpa === 'number' ? rawMember.cgpa : member.cgpa,
-        verifiedCgpa: typeof rawMember.verifiedCgpa === 'number'
-          ? rawMember.verifiedCgpa
-          : typeof rawMember.cgpa === 'number'
-            ? rawMember.cgpa
-            : member.verifiedCgpa,
-        isLeader: head,
-        isHead: head,
-        joinedAt: typeof rawMember.joinedAt === 'string' ? rawMember.joinedAt : undefined,
-      }]
-    })
-    const isLocked = typeof entry.isLocked === 'boolean'
-      ? entry.isLocked
-      : entry.status === 'locked'
-    const idSuffix = entry.id.replace(/\D/g, '').slice(-4).padStart(4, '0')
-    return [{
-      id: entry.id,
-      leaderId: leaderId || members[0]?.studentId || '',
-      headStudentId: leaderId || members[0]?.studentId || '',
-      inviteCode: typeof entry.inviteCode === 'string' ? entry.inviteCode : `GRP-${idSuffix}`,
-      maxSize: entry.maxSize === 3 || entry.maxSize === 4 ? entry.maxSize : 4,
-      status: isLocked ? 'locked' : members.length >= 3 ? 'complete' : 'open',
-      members,
-      averageCgpa: typeof entry.averageCgpa === 'number' ? entry.averageCgpa : averageCgpa(members),
-      isLocked,
-      preferences: Array.isArray(entry.preferences)
-        ? entry.preferences.filter((preference): preference is string => typeof preference === 'string')
-        : [],
-      allottedRoomId: typeof entry.allottedRoomId === 'string' ? entry.allottedRoomId : undefined,
-      allocationStatus: entry.allocationStatus === 'allotted' || entry.allocationStatus === 'unallotted'
-        ? entry.allocationStatus
+  const status = String(value.status ?? 'FORMING')
+  const room = object(value.room)
+  return {
+    id: String(value.id ?? ''),
+    leaderId: mappedMembers.find((member) => member.isLeader)?.studentId ?? '',
+    headStudentId: mappedMembers.find((member) => member.isLeader)?.studentId ?? '',
+    inviteCode: String(value.id ?? ''),
+    maxSize: 4,
+    status: status === 'FORMING' ? 'open' : status === 'SUBMITTED' ? 'complete' : 'locked',
+    members: mappedMembers,
+    averageCgpa: Number(value.averageCgpa ?? 0),
+    isLocked: status !== 'FORMING',
+    preferences: Array.isArray(value.preferences) ? value.preferences.filter((id): id is string => typeof id === 'string') : [],
+    allottedRoomId: typeof room.id === 'string' ? room.id : undefined,
+    allottedRoomNumber: typeof room.roomNumber === 'string' ? room.roomNumber : undefined,
+    allocationStatus: status === 'ALLOTTED'
+      ? 'allotted'
+      : status === 'UNALLOTTED'
+        ? 'unallotted'
         : 'pending',
-    }]
-  })
-}
-
-function isApplication(value: unknown): value is Application {
-  if (!isRecord(value) || !isRecord(value.personal) || !isRecord(value.address) ||
-    !isRecord(value.academic) || !isRecord(value.documents)) return false
-  const documents = value.documents
-  const validDoc = (doc: unknown) => doc === null ||
-    (isRecord(doc) && typeof doc.name === 'string' &&
-      typeof doc.mimeType === 'string' && typeof doc.sizeBytes === 'number')
-  return typeof value.id === 'string' &&
-    typeof value.studentId === 'string' &&
-    isStudentStatus(value.status) &&
-    typeof value.personal.fullName === 'string' &&
-    typeof value.personal.rollNumber === 'string' &&
-    typeof value.personal.branch === 'string' &&
-    typeof value.personal.year === 'string' &&
-    typeof value.personal.phone === 'string' &&
-    typeof value.personal.email === 'string' &&
-    typeof value.personal.parentName === 'string' &&
-    typeof value.personal.parentPhone === 'string' &&
-    typeof value.address.permanentAddress === 'string' &&
-    typeof value.address.city === 'string' &&
-    typeof value.address.state === 'string' &&
-    typeof value.address.pincode === 'string' &&
-    typeof value.academic.selfReportedCgpa === 'string' &&
-    typeof value.academic.previousSemPercentage === 'string' &&
-    typeof value.academic.activeBacklogs === 'string' &&
-    validDoc(documents.aadharCard) &&
-    validDoc(documents.marksheet) &&
-    validDoc(documents.feeReceipt) &&
-    validDoc(documents.studentIdCard) &&
-    validDoc(documents.hostelIdCard) &&
-    Array.isArray(documents.otherDocs) &&
-    documents.otherDocs.every((doc) =>
-      isRecord(doc) && typeof doc.label === 'string' && validDoc(doc.file)) &&
-    typeof value.adminRemarks === 'string' &&
-    typeof value.correctionNotes === 'string' &&
-    (value.submittedAt === null || typeof value.submittedAt === 'string') &&
-    (value.verifiedCgpa === null || typeof value.verifiedCgpa === 'number') &&
-    (value.verifiedBy === null || typeof value.verifiedBy === 'string') &&
-    (value.verifiedAt === null || typeof value.verifiedAt === 'string')
-}
-
-function normalizeApplications(value: unknown, students: StudentProfile[]): Application[] {
-  if (!Array.isArray(value) || value.length === 0 || !value.every(isApplication)) {
-    return createApplications(students)
   }
-  return value.filter((application) => students.some((student) => student.id === application.studentId))
 }
 
-function makeGroup(id: string, leader: StudentProfile, maxSize: number, members: GroupMember[]): StudentGroup {
-  const inviteCode = `GRP-${id.replace(/\D/g, '').slice(-4).padStart(4, '0')}`
+function mapApplication(student: StudentProfile, payload?: unknown): Application {
+  const value = object(payload)
+  const documents = object(value.documents)
+  const details = object(documents.applicationDetails)
+  const address = object(details.address)
   return {
-    id,
-    leaderId: leader.id,
-    headStudentId: leader.id,
-    inviteCode,
-    maxSize,
-    status: 'open',
-    members,
-    averageCgpa: averageCgpa(members),
-    isLocked: false,
-    preferences: [],
-    allocationStatus: 'pending',
+    id: String(value.id ?? ''),
+    studentId: student.id,
+    personal: {
+      fullName: student.name,
+      rollNumber: student.rollNo,
+      branch: student.branch,
+      year: String(student.year),
+      phone: String(details.phone ?? student.phone),
+      email: student.email,
+      parentName: '',
+      parentPhone: '',
+    },
+    address: {
+      permanentAddress: String(address.street ?? student.address.street),
+      city: String(address.city ?? student.address.city),
+      state: String(address.state ?? student.address.state),
+      pincode: String(address.pincode ?? student.address.pincode),
+    },
+    academic: {
+      selfReportedCgpa: String(student.cgpa),
+      previousSemPercentage: '',
+      activeBacklogs: '0',
+    },
+    documents: {
+      aadharCard: null,
+      marksheet: null,
+      feeReceipt: null,
+      studentIdCard: null,
+      hostelIdCard: null,
+      otherDocs: [],
+    },
+    status: student.status,
+    submittedAt: typeof value.submittedAt === 'string' ? value.submittedAt : null,
+    adminRemarks: typeof value.adminRemarks === 'string' ? value.adminRemarks : '',
+    correctionNotes: String(documents.correctionNotes ?? ''),
+    verifiedCgpa: student.status === 'approved' ? student.cgpa : null,
+    verifiedBy: null,
+    verifiedAt: null,
   }
+}
+
+async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(path, {
+    ...init,
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', ...init?.headers },
+  })
+  const payload: unknown = await response.json().catch(() => null)
+  if (!response.ok) {
+    const value = object(payload)
+    const error = new Error(
+      typeof value.error === 'string' ? value.error : `Request failed (${response.status}).`,
+    ) as ApiFailure
+    error.code = typeof value.code === 'string' ? value.code : undefined
+    throw error
+  }
+  return payload as T
+}
+
+async function post(path: string, body?: unknown) {
+  return api<unknown>(path, {
+    method: 'POST',
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  })
 }
 
 export function MockDataProvider({ children }: { children: ReactNode }) {
-  const [students, setStudents] = useState<StudentProfile[]>(INITIAL_STUDENTS)
-  const [applications, setApplications] = useState<Application[]>(() => createApplications(INITIAL_STUDENTS))
-  const [rooms, setRooms] = useState<Room[]>(INITIAL_ROOMS)
-  const [groups, setGroups] = useState<StudentGroup[]>(INITIAL_GROUPS)
-  const [currentRound, setCurrentRound] = useState(1)
-  const [session, setSession] = useState<AuthSession | null>(
-    DEFAULT_STUDENT_ID ? { userId: DEFAULT_STUDENT_ID, role: 'student' } : null
-  )
+  const [session, setSession] = useState<AuthSession | null>(null)
+  const [students, setStudents] = useState<StudentProfile[]>([])
+  const [applications, setApplications] = useState<Application[]>([])
+  const [rooms, setRooms] = useState<Room[]>([])
+  const [groups, setGroups] = useState<StudentGroup[]>([])
+  const [openGroups, setOpenGroups] = useState<StudentGroup[]>([])
+  const [currentRound, setCurrentRound] = useState(0)
+  const [currentRoundId, setCurrentRoundId] = useState<string | null>(null)
+  const [currentRoundStatus, setCurrentRoundStatus] = useState<RoundStatus | null>(null)
+  const [currentRoundDeadline, setCurrentRoundDeadline] = useState('')
+  const [roundHistory, setRoundHistory] = useState<Array<Record<string, unknown>>>([])
+  const [currentTieBreakRule, setCurrentTieBreakRule] =
+    useState<TieBreakRule>('MAX_CGPA_THEN_ROLL_NO')
+  const [unallottedStudents, setUnallottedStudents] = useState<Array<Record<string, unknown>>>([])
+  const [auditLog, setAuditLog] = useState<Array<Record<string, unknown>>>([])
+  const [availableRooms, setAvailableRooms] = useState<Array<Record<string, unknown>>>([])
+  const [allocationStatus, setAllocationStatus] = useState<{ status: string; nextStep: string | null } | null>(null)
   const [groupsPublished, setGroupsPublished] = useState(false)
-  const [hydrated, setHydrated] = useState(false)
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => {
-      try {
-        const saved = localStorage.getItem(STORAGE_KEY)
-        if (saved) {
-          const parsed: unknown = JSON.parse(saved)
-          if (typeof parsed === 'object' && parsed !== null) {
-            const state = parsed as Record<string, unknown>
-            const loadedStudents = normalizeStudents(state.students)
-            setStudents(loadedStudents)
-            setApplications(normalizeApplications(state.applications, loadedStudents))
-            setRooms(normalizeRooms(state.rooms))
-            setGroups(normalizeGroups(state.groups, loadedStudents))
-            setCurrentRound(typeof state.currentRound === 'number' ? state.currentRound : 1)
-            if (isRecord(state.session)) {
-              const savedSession = state.session
-              if (typeof savedSession.userId === 'string' &&
-                (savedSession.role === 'student' || savedSession.role === 'admin')) {
-                setSession({ userId: savedSession.userId, role: savedSession.role })
-              }
-            }
-            setGroupsPublished(state.groupsPublished === true)
-          }
-        }
-      } catch (error) {
-        console.error('Failed to load saved hostel portal state.', error)
-      } finally {
-        setHydrated(true)
-      }
-    }, 0)
-    return () => window.clearTimeout(timeout)
-  }, [])
-
-  useEffect(() => {
-    if (!hydrated) return
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({
-        students,
-        applications,
-        rooms,
-        groups,
-        currentRound,
-        session,
-        groupsPublished,
-      }))
-    } catch (error) {
-      console.error('Failed to save hostel portal state.', error)
-    }
-  }, [students, applications, rooms, groups, currentRound, session, groupsPublished, hydrated])
+  const [isHydrated, setIsHydrated] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const currentStudent = useMemo(
-    () => students.find((student) => student.id === session?.userId) ?? students[0] ?? null,
-    [students, session]
+    () => students.find((student) => student.id === session?.userId) ?? null,
+    [students, session],
   )
 
-  const loginAsStudent = useCallback((identifier: string, password: string) => {
-    const normalized = identifier.trim().toLowerCase()
-    const student = students.find((candidate) =>
-      candidate.email.toLowerCase() === normalized ||
-      candidate.rollNo.toLowerCase() === normalized
-    )
-    if (!student) return { success: false, error: 'Email or roll number not found.' }
-    if (password !== 'student123') return { success: false, error: 'Incorrect password.' }
-    setSession({ userId: student.id, role: 'student' })
-    return { success: true }
-  }, [students])
-
-  const loginAsAdmin = useCallback((identifier: string, password: string) => {
-    if (identifier.trim().toLowerCase() !== 'admin@vjti.ac.in') {
-      return { success: false, error: 'Admin email not recognized.' }
+  const refreshData = useCallback(async () => {
+    if (!session) return
+    setLoading(true)
+    setError(null)
+    try {
+      if (session.role === 'student') {
+        const [profile, ownGroup, rawRooms, rawOpenGroups] = await Promise.all([
+          api<Record<string, unknown>>('/api/students/me'),
+          api<GroupStatusPayload>('/api/groups/me'),
+          api<unknown[]>('/api/rooms'),
+          api<unknown[]>('/api/groups/open'),
+        ])
+        const student = mapStudent(profile)
+        setSession((current) =>
+          current && current.userId !== student.id ? { ...current, userId: student.id } : current,
+        )
+        setStudents([student])
+        setApplications([mapApplication(student, profile.application)])
+        setRooms(rawRooms.map(mapRoom))
+        setRoundHistory([])
+        setUnallottedStudents([])
+        setAuditLog([])
+        setAvailableRooms([])
+        setGroups(ownGroup.group ? [mapGroup(ownGroup.group)] : [])
+        setAllocationStatus(ownGroup.allocation)
+        setOpenGroups(rawOpenGroups.map(mapGroup))
+        const ownGroupValue = object(ownGroup.group)
+        const round = object(ownGroupValue.round)
+        setGroupsPublished(round.status === 'PUBLISHED' || round.status === 'CLOSED')
+      } else {
+        const [roundList, applicationList] = await Promise.all([
+          api<unknown[]>('/api/admin/rounds'),
+          api<unknown[]>('/api/admin/applications'),
+        ])
+        setRoundHistory(roundList.map(object))
+        const applicationRows = applicationList.map((payload) => {
+          const value = object(payload)
+          const student = mapStudent(value)
+          return { student, application: mapApplication(student, value.application) }
+        })
+        setStudents(applicationRows.map((row) => row.student))
+        setApplications(applicationRows.map((row) => row.application))
+        const latest = roundList.length ? object(roundList[0]) : null
+        if (!latest) {
+          setCurrentRound(0)
+          setCurrentRoundId(null)
+          setCurrentRoundStatus(null)
+          setGroups([])
+        } else {
+          const roundId = String(latest.id)
+          const round = await api<Record<string, unknown>>(`/api/admin/rounds/${roundId}`)
+          const roundGroups = Array.isArray(round.groups) ? round.groups : []
+          const snapshots = Array.isArray(round.snapshots) ? round.snapshots : []
+          const snapshotByGroup = new Map(snapshots.map((snapshot) => {
+            const value = object(snapshot)
+            return [String(value.groupId), value]
+          }))
+          setGroups(roundGroups.map((rawGroup) => {
+            const group = object(rawGroup)
+            const mapped = mapGroup(group)
+            const snapshot = snapshotByGroup.get(mapped.id)
+            if (!snapshot) return mapped
+            const savedStatus = String(snapshot.result)
+            return {
+              ...mapped,
+              averageCgpa: Number(snapshot.averageCgpa ?? mapped.averageCgpa),
+              meritRank: Number(snapshot.rank ?? 0) || undefined,
+              tieBreakNote: typeof snapshot.tieBreakNote === 'string' ? snapshot.tieBreakNote : undefined,
+              allocationReason: typeof snapshot.reason === 'string' ? snapshot.reason : undefined,
+              allocationStatus: savedStatus === 'ALLOTTED' ? 'allotted' : 'unallotted',
+            }
+          }))
+          setCurrentRound(Number(latest.number))
+          setCurrentRoundId(roundId)
+          setCurrentRoundStatus(latest.status as RoundStatus)
+          setCurrentRoundDeadline(typeof latest.formationDeadline === 'string' ? latest.formationDeadline : '')
+          setCurrentTieBreakRule(latest.tieBreakRule as TieBreakRule)
+        }
+        const [unallotted, inventory, audit] = await Promise.all([
+          api<unknown[]>('/api/admin/unallotted'),
+          api<unknown[]>('/api/admin/rooms/available'),
+          api<unknown[]>('/api/admin/audit'),
+        ])
+        setUnallottedStudents(unallotted.map(object))
+        setAvailableRooms(inventory.map(object))
+        setAuditLog(audit.map(object))
+        setRooms(inventory.map(mapRoom))
+        setGroupsPublished(latest?.status === 'PUBLISHED' || latest?.status === 'CLOSED')
+      }
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Unable to load portal data.'
+      setError(message)
+    } finally {
+      setLoading(false)
+      setIsHydrated(true)
     }
-    if (password !== 'admin123') return { success: false, error: 'Incorrect password.' }
-    setSession({ userId: 'admin_1', role: 'admin' })
-    return { success: true }
+  }, [session])
+
+  const loadPortalUser = useCallback(async () => {
+    try {
+      const user = await api<Record<string, unknown>>('/api/auth/me')
+      const role = user.role === 'STUDENT' ? 'student' : 'admin'
+      if (role === 'student') {
+        const profile = await api<Record<string, unknown>>('/api/students/me')
+        setSession({ userId: String(profile.id), role })
+      } else {
+        setSession({ userId: String(user.id), role })
+      }
+    } catch (cause) {
+      const failure = cause as ApiFailure
+      if (failure.code !== 'UNAUTHENTICATED') {
+        setError(cause instanceof Error ? cause.message : 'Unable to verify your portal account.')
+      }
+      setSession(null)
+      setIsHydrated(true)
+    }
   }, [])
 
-  const loginStudent = useCallback((identifier: string) => {
-    const normalized = identifier.trim().toLowerCase()
-    const student = students.find((candidate) =>
-      candidate.rollNo.toLowerCase() === normalized ||
-      candidate.email.toLowerCase() === normalized
-    )
-    if (student) setSession({ userId: student.id, role: 'student' })
-  }, [students])
-
-  const logout = useCallback(() => setSession(null), [])
-
-  const updateApplicationStatus = useCallback((
-    id: string,
-    requestedStatus: StudentStatus,
-    options?: UpdateApplicationOptions | string
-  ) => {
-    const status = statusForApplication(requestedStatus)
-    const application = applications.find((entry) => entry.id === id || entry.studentId === id)
-    const studentId = application?.studentId ?? id
-    const student = students.find((entry) => entry.id === studentId)
-    const updateOptions = typeof options === 'string' ? { adminRemarks: options } : options
-
-    setStudents((previous) => previous.map((entry) =>
-      entry.id === studentId
-        ? {
-            ...entry,
-            status,
-            ...(updateOptions?.adminRemarks !== undefined ? { adminRemarks: updateOptions.adminRemarks } : {}),
-            ...(updateOptions?.verifiedCgpa !== undefined ? { cgpa: updateOptions.verifiedCgpa } : {}),
-          }
-        : entry
-    ))
-
-    setApplications((previous) => {
-      const target = previous.find((entry) => entry.studentId === studentId)
-      if (!target && !student) return previous
-      const targetId = target?.id ?? `app_${studentId}`
-      const base = target ?? createApplications(student ? [student] : [])[0]
-      if (!base) return previous
-      const next: Application = {
-        ...base,
-        status,
-        adminRemarks: updateOptions?.adminRemarks ?? base.adminRemarks,
-        correctionNotes: updateOptions?.correctionNotes ?? base.correctionNotes,
-        verifiedCgpa: updateOptions?.verifiedCgpa ?? base.verifiedCgpa,
-        verifiedBy: updateOptions?.verifiedBy ?? base.verifiedBy,
-        verifiedAt: updateOptions?.verifiedCgpa !== undefined ? new Date().toISOString() : base.verifiedAt,
+  useEffect(() => {
+    let active = true
+    supabase.auth.getSession().then(({ data, error: sessionError }) => {
+      if (sessionError) throw sessionError
+      if (active && data.session) void loadPortalUser()
+      else if (active) setIsHydrated(true)
+    }).catch((cause: unknown) => {
+      if (active) {
+        setError(cause instanceof Error ? cause.message : 'Unable to restore the session.')
+        setIsHydrated(true)
       }
-      return target
-        ? previous.map((entry) => entry.id === targetId ? next : entry)
-        : [...previous, next]
     })
-  }, [applications, students])
-
-  const createGroup = useCallback((studentId: string, maxSize: number) => {
-    const student = students.find((entry) => entry.id === studentId)
-    if (!student) return { success: false, error: 'Student record not found.' }
-    if (student.status !== 'approved') return { success: false, error: 'Application must be approved before creating a group.' }
-    if (groups.some((group) => group.members.some((member) => member.studentId === studentId))) {
-      return { success: false, error: 'Student already belongs to a group.' }
+    const { data: subscription } = supabase.auth.onAuthStateChange((_event, authSession) => {
+      if (authSession) void loadPortalUser()
+      else {
+        setSession(null)
+        setStudents([])
+        setApplications([])
+        setGroups([])
+        setOpenGroups([])
+        setRooms([])
+        setRoundHistory([])
+        setUnallottedStudents([])
+        setAuditLog([])
+        setAvailableRooms([])
+        setIsHydrated(true)
+      }
+    })
+    return () => {
+      active = false
+      subscription.subscription.unsubscribe()
     }
-    if (maxSize !== 3 && maxSize !== 4) return { success: false, error: 'Group size must be 3 or 4.' }
-    const group = makeGroup(`grp_${Date.now()}`, student, maxSize, [makeMember(student, true)])
-    setGroups((previous) => [...previous, group])
-    setStudents((previous) => previous.map((entry) =>
-      entry.id === studentId ? { ...entry, groupId: group.id } : entry
-    ))
-    return { success: true }
-  }, [groups, students])
+  }, [loadPortalUser])
 
-  const joinGroup = useCallback((inviteCode: string, studentId: string) => {
-    const student = students.find((entry) => entry.id === studentId)
-    const group = groups.find((entry) => entry.inviteCode.toUpperCase() === inviteCode.trim().toUpperCase())
-    if (!student) return { success: false, error: 'Student record not found.' }
-    if (student.status !== 'approved') return { success: false, error: 'Application must be approved before joining a group.' }
-    if (!group) return { success: false, error: 'Group invite code not found.' }
-    if (group.isLocked) return { success: false, error: 'This group is locked.' }
-    if (group.members.length >= group.maxSize) return { success: false, error: 'This group is full.' }
-    if (groups.some((entry) => entry.members.some((member) => member.studentId === studentId))) {
-      return { success: false, error: 'Student already belongs to a group.' }
+  useEffect(() => {
+    let active = true
+    if (session) {
+      queueMicrotask(() => {
+        if (active) void refreshData()
+      })
     }
-    setGroups((previous) => previous.map((entry) => {
-      if (entry.id !== group.id) return entry
-      const members = [...entry.members, makeMember(student)]
+    return () => { active = false }
+  }, [session, refreshData])
+
+  const signIn = useCallback(async (
+    identifier: string,
+    password: string,
+    expectedRole: 'student' | 'admin',
+  ) => {
+    try {
+      let email = identifier.trim()
+      if (expectedRole === 'student' && !email.includes('@')) {
+        const resolved = await api<{ email: string }>(
+          `/api/students/lookup?rollNo=${encodeURIComponent(email)}`,
+        )
+        email = resolved.email
+      }
+      const { error: signInError } = await supabase.auth.signInWithPassword({ email, password })
+      if (signInError) throw signInError
+      const user = await api<Record<string, unknown>>('/api/auth/me')
+      const actualRole = user.role === 'STUDENT' ? 'student' : 'admin'
+      if (actualRole !== expectedRole) {
+        await supabase.auth.signOut()
+        throw new Error('This account does not have access to the selected portal.')
+      }
+      setError(null)
+      if (actualRole === 'student') {
+        const profile = await api<Record<string, unknown>>('/api/students/me')
+        setSession({ userId: String(profile.id), role: actualRole })
+      } else {
+        setSession({ userId: String(user.id), role: actualRole })
+      }
+      setIsHydrated(true)
+      return { success: true }
+    } catch (cause) {
       return {
-        ...entry,
-        members,
-        averageCgpa: averageCgpa(members),
-        status: members.length >= 3 ? 'complete' : 'open',
+        success: false,
+        error: cause instanceof Error ? cause.message : 'Sign in failed.',
       }
-    }))
-    setStudents((previous) => previous.map((entry) =>
-      entry.id === studentId ? { ...entry, groupId: group.id } : entry
-    ))
-    return { success: true }
-  }, [groups, students])
-
-  const createOrJoinGroup = useCallback((studentId: string, targetRollNo: string) => {
-    const target = students.find((entry) => entry.rollNo.trim().toUpperCase() === targetRollNo.trim().toUpperCase())
-    if (!target) return { success: false, message: 'Roll number not found in college records.' }
-    if (target.status !== 'approved') return { success: false, message: 'Student application is not approved.' }
-    if (groups.some((group) => group.members.some((member) => member.studentId === target.id))) {
-      return { success: false, message: 'Student already belongs to a group.' }
     }
-    const existingGroup = groups.find((group) => group.members.some((member) => member.studentId === studentId))
-    if (existingGroup) {
-      const result = joinGroup(existingGroup.inviteCode, target.id)
-      return { success: result.success, message: result.error ?? `Added ${target.name} successfully.` }
-    }
-    const initiator = students.find((entry) => entry.id === studentId)
-    if (!initiator) return { success: false, message: 'Initiator student record not found.' }
-    const group = makeGroup(`grp_${Date.now()}`, initiator, 4, [makeMember(initiator, true), makeMember(target)])
-    setGroups((previous) => [...previous, group])
-    setStudents((previous) => previous.map((entry) =>
-      entry.id === studentId || entry.id === target.id ? { ...entry, groupId: group.id } : entry
-    ))
-    return { success: true, message: `Added ${target.name} successfully.` }
-  }, [groups, joinGroup, students])
-
-  const leaveGroup = useCallback((studentId: string) => {
-    const group = groups.find((entry) => entry.members.some((member) => member.studentId === studentId))
-    if (!group) return { success: false, error: 'Student is not in a group.' }
-    if (group.isLocked) return { success: false, error: 'Locked groups cannot be changed.' }
-    if (group.headStudentId === studentId) return { success: false, error: 'The group leader cannot leave the group.' }
-    const members = group.members.filter((member) => member.studentId !== studentId)
-    setGroups((previous) => previous
-      .map((entry) => entry.id === group.id ? { ...entry, members, averageCgpa: averageCgpa(members) } : entry)
-      .filter((entry) => entry.members.length > 0))
-    setStudents((previous) => previous.map((entry) =>
-      entry.id === studentId ? { ...entry, groupId: undefined } : entry
-    ))
-    return { success: true }
-  }, [groups])
-
-  const lockGroup = useCallback((groupId: string) => {
-    const group = groups.find((entry) => entry.id === groupId)
-    if (!group) return { success: false, error: 'Group not found.' }
-    if (group.members.length < 3) return { success: false, error: 'At least 3 members are required to lock a group.' }
-    setGroups((previous) => previous.map((entry) =>
-      entry.id === groupId ? { ...entry, isLocked: true, status: 'locked' } : entry
-    ))
-    return { success: true }
-  }, [groups])
-
-  const savePreferences = useCallback((groupId: string, preferences: string[]) => {
-    setGroups((previous) => previous.map((group) =>
-      group.id === groupId ? { ...group, preferences: [...preferences], isLocked: true, status: 'locked' } : group
-    ))
   }, [])
 
-  const runAllocationRound = useCallback(() => {
-    const nextRooms = rooms.map((room) => ({ ...room }))
-    const nextGroups = groups.map((group) => ({ ...group }))
-    const ranked = nextGroups
-      .filter((group) => group.allocationStatus === 'pending' && group.preferences.length > 0)
-      .sort((left, right) => right.averageCgpa - left.averageCgpa)
-
-    for (const group of ranked) {
-      const room = group.preferences
-        .map((id) => nextRooms.find((candidate) => candidate.id === id))
-        .find((candidate) => candidate?.status === 'available' && candidate.capacity >= group.members.length)
-      if (!room) {
-        group.allocationStatus = 'unallotted'
-        continue
-      }
-      room.status = 'occupied'
-      room.allottedGroupId = group.id
-      group.allottedRoomId = room.id
-      group.allocationStatus = 'allotted'
-    }
-
-    setRooms(nextRooms)
-    setGroups(nextGroups)
-    setCurrentRound((round) => round + 1)
-  }, [groups, rooms])
-
-  const resetAllData = useCallback(() => {
-    localStorage.removeItem(STORAGE_KEY)
-    setStudents(INITIAL_STUDENTS)
-    setApplications(createApplications(INITIAL_STUDENTS))
-    setRooms(INITIAL_ROOMS)
-    setGroups(INITIAL_GROUPS)
-    setCurrentRound(1)
-    setSession(DEFAULT_STUDENT_ID ? { userId: DEFAULT_STUDENT_ID, role: 'student' } : null)
-    setGroupsPublished(false)
+  const loginAsStudent = useCallback(
+    (identifier: string, password: string) => signIn(identifier, password, 'student'),
+    [signIn],
+  )
+  const loginAsAdmin = useCallback(
+    (identifier: string, password: string) => signIn(identifier, password, 'admin'),
+    [signIn],
+  )
+  const loginStudent = useCallback(async (identifier: string) => {
+    const result = await loginAsStudent(identifier, '')
+    if (!result.success) throw new Error(result.error ?? 'Sign in failed.')
+  }, [loginAsStudent])
+  const logout = useCallback(async () => {
+    const { error: signOutError } = await supabase.auth.signOut()
+    if (signOutError) throw signOutError
+    setSession(null)
   }, [])
+
+  const refreshAfterMutation = useCallback(async () => {
+    await refreshData()
+  }, [refreshData])
+
+  const createGroup = useCallback(async (studentId: string, maxSize: number) => {
+    if (studentId !== currentStudent?.id) {
+      return { success: false, error: 'You can only create a group for your signed-in account.' }
+    }
+    if (maxSize !== 3 && maxSize !== 4) {
+      return { success: false, error: 'A group must have a size of 3 or 4.' }
+    }
+    try {
+      await post('/api/groups', {})
+      await refreshAfterMutation()
+      return { success: true }
+    } catch (cause) {
+      return { success: false, error: cause instanceof Error ? cause.message : 'Could not create group.' }
+    }
+  }, [currentStudent?.id, refreshAfterMutation])
+
+  const joinGroup = useCallback(async (groupId: string, studentId: string) => {
+    if (studentId !== currentStudent?.id) {
+      return { success: false, error: 'You can only join a group using your signed-in account.' }
+    }
+    try {
+      await post('/api/groups/join', { groupId })
+      await refreshAfterMutation()
+      return { success: true }
+    } catch (cause) {
+      return { success: false, error: cause instanceof Error ? cause.message : 'Could not join group.' }
+    }
+  }, [currentStudent?.id, refreshAfterMutation])
+
+  const createOrJoinGroup = useCallback(async (studentId: string, groupId: string) => {
+    const result = await joinGroup(groupId, studentId)
+    return { success: result.success, message: result.error ?? 'Joined the group successfully.' }
+  }, [joinGroup])
+
+  const leaveGroup = useCallback(async (studentId: string) => {
+    if (studentId !== currentStudent?.id) {
+      return { success: false, error: 'You can only leave a group using your signed-in account.' }
+    }
+    const group = groups[0]
+    if (!group) return { success: false, error: 'You are not currently in a group.' }
+    try {
+      await post(`/api/groups/${group.id}/leave`)
+      await refreshAfterMutation()
+      return { success: true }
+    } catch (cause) {
+      return { success: false, error: cause instanceof Error ? cause.message : 'Could not leave group.' }
+    }
+  }, [currentStudent?.id, groups, refreshAfterMutation])
+
+  const dissolveGroup = useCallback(async (groupId: string) => {
+    try {
+      await post(`/api/groups/${groupId}/dissolve`)
+      await refreshAfterMutation()
+      return { success: true }
+    } catch (cause) {
+      return { success: false, error: cause instanceof Error ? cause.message : 'Could not dissolve group.' }
+    }
+  }, [refreshAfterMutation])
+
+  const lockGroup = useCallback(async (groupId: string) => {
+    try {
+      await post(`/api/groups/${groupId}/submit`)
+      await refreshAfterMutation()
+      return { success: true }
+    } catch (cause) {
+      return { success: false, error: cause instanceof Error ? cause.message : 'Could not submit group.' }
+    }
+  }, [refreshAfterMutation])
+
+  const savePreferences = useCallback(async (groupId: string, preferences: string[]) => {
+    await api(`/api/groups/${groupId}/preferences`, {
+      method: 'PUT',
+      body: JSON.stringify({ preferences }),
+    })
+    await refreshAfterMutation()
+  }, [refreshAfterMutation])
+
+  const runAllocationRound = useCallback(async () => {
+    if (!currentRoundId) throw new Error('There is no round selected for allocation.')
+    await post(`/api/admin/rounds/${currentRoundId}/allocate`)
+    await refreshAfterMutation()
+  }, [currentRoundId, refreshAfterMutation])
+
+  const adminRoundAction = useCallback(async (action: string) => {
+    if (!currentRoundId) throw new Error('There is no current round.')
+    await post(`/api/admin/rounds/${currentRoundId}/${action}`)
+    await refreshAfterMutation()
+  }, [currentRoundId, refreshAfterMutation])
+
+  const createRound = useCallback(async (deadline: string, tieBreakRule: TieBreakRule) => {
+    await post('/api/admin/rounds', { formationDeadline: new Date(deadline).toISOString(), tieBreakRule })
+    await refreshAfterMutation()
+  }, [refreshAfterMutation])
+
+  const updateRoundSettings = useCallback(async (deadline: string, tieBreakRule: TieBreakRule) => {
+    if (!currentRoundId) throw new Error('There is no current round.')
+    await api(`/api/admin/rounds/${currentRoundId}/settings`, {
+      method: 'PATCH',
+      body: JSON.stringify({ formationDeadline: new Date(deadline).toISOString(), tieBreakRule }),
+    })
+    await refreshAfterMutation()
+  }, [currentRoundId, refreshAfterMutation])
+
+  const cancelAllotment = useCallback(async (groupId: string, reason: string) => {
+    if (!currentRoundId) throw new Error('There is no current round.')
+    await post(`/api/admin/rounds/${currentRoundId}/cancel-allotment`, { groupId, reason })
+    await refreshAfterMutation()
+  }, [currentRoundId, refreshAfterMutation])
+
+  const updateApplicationStatus = useCallback(async (
+    id: string,
+    status: StudentStatus,
+    options?: UpdateApplicationOptions | string,
+  ) => {
+    const adminOptions = typeof options === 'string' ? { adminRemarks: options } : options ?? {}
+    const apiStatus =
+      status === 'approved' ? 'approved'
+        : status === 'rejected' ? 'rejected'
+          : status === 'correction_required' ? 'correction_required'
+            : status === 'under_review' ? 'under_review'
+              : 'under_review'
+    await api(`/api/admin/applications/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        status: apiStatus,
+        adminRemarks: adminOptions.adminRemarks,
+        correctionNotes: adminOptions.correctionNotes,
+        verifiedCgpa: adminOptions.verifiedCgpa,
+      }),
+    })
+    await refreshAfterMutation()
+  }, [refreshAfterMutation])
+
+  const submitApplication = useCallback(async (input: {
+    phone: string
+    address: { street: string; city: string; state: string; pincode: string }
+  }) => {
+    await post('/api/applications/me', input)
+    await refreshAfterMutation()
+  }, [refreshAfterMutation])
 
   const value: MockDataContextValue = {
     session,
@@ -615,21 +665,43 @@ export function MockDataProvider({ children }: { children: ReactNode }) {
     groups,
     currentStudent,
     currentRound,
-    isHydrated: hydrated,
+    isHydrated,
     groupsPublished,
+    loading,
+    error,
+    allocationStatus,
+    currentRoundId,
+    currentRoundStatus,
+    currentRoundDeadline,
+    currentTieBreakRule,
+    roundHistory,
+    openGroups,
+    unallottedStudents,
+    auditLog,
+    availableRooms,
     loginAsStudent,
     loginAsAdmin,
     loginStudent,
     logout,
+    refreshData,
     updateApplicationStatus,
+    submitApplication,
     createOrJoinGroup,
     createGroup,
     joinGroup,
     leaveGroup,
+    dissolveGroup,
     lockGroup,
     savePreferences,
     runAllocationRound,
-    resetAllData,
+    createRound,
+    updateRoundSettings,
+    openRound: () => adminRoundAction('open'),
+    closeFormation: () => adminRoundAction('close-formation'),
+    publishRound: () => adminRoundAction('publish'),
+    closeRound: () => adminRoundAction('close'),
+    cancelAllotment,
+    resetAllData: () => setError('Resetting production records is not supported.'),
   }
 
   return <MockDataContext.Provider value={value}>{children}</MockDataContext.Provider>

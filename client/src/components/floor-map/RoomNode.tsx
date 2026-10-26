@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { BedDouble, Check } from 'lucide-react';
+import { BedDouble } from 'lucide-react';
 import { Room } from '@/lib/types';
 
 interface RoomNodeProps {

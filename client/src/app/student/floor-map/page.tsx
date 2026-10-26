@@ -1,19 +1,38 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
-import { Building, Layers, ShieldAlert, CheckCircle2, BedDouble, AlertCircle } from 'lucide-react';
+import { Building, Layers, ShieldAlert, CheckCircle2 } from 'lucide-react';
 import { useMockData } from '@/context/MockDataContext';
 import { Room } from '@/lib/types';
-import RoomNode from '@/components/floor-map/RoomNode';
 import PrioritySelector from '@/components/floor-map/PrioritySelector';
 
 export default function StudentFloorMapPage() {
-  const { currentStudent, rooms, groups, savePreferences } = useMockData();
+  const { currentStudent, rooms, groups, savePreferences, loading, error, refreshData, allocationStatus } = useMockData();
   const [selectedFloor, setSelectedFloor] = useState<number>(1);
   const [selectedBlock, setSelectedBlock] = useState<string>('A');
+  const [selectedHostel, setSelectedHostel] = useState<string>('');
   const [preferenceIds, setPreferenceIds] = useState<string[]>([]);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const initializedGroupId = useRef<string | null>(null);
+
+  const hostels = Array.from(new Map(
+    rooms.map((room) => [room.hostelId ?? room.hostelName ?? '', {
+      id: room.hostelId ?? room.hostelName ?? '',
+      name: room.hostelName ?? 'Hostel',
+    }]),
+  ).values());
+
+  const activeHostel = selectedHostel || hostels[0]?.id || '';
+
+  useEffect(() => {
+    const currentGroup = groups[0];
+    if (currentGroup && initializedGroupId.current !== currentGroup.id) {
+      initializedGroupId.current = currentGroup.id;
+      setPreferenceIds(currentGroup.preferences);
+    }
+  }, [groups]);
 
   if (!currentStudent) {
     return (
@@ -29,12 +48,16 @@ export default function StudentFloorMapPage() {
     );
   }
 
-  const currentGroup = groups.find((g) => g.id === currentStudent.groupId);
+  const currentGroup = groups[0];
   const isLeader = currentGroup ? currentGroup.leaderId === currentStudent.id : false;
+  const canEditPreferences = Boolean(
+    currentGroup && currentGroup.allocationStatus === 'pending' && isLeader,
+  );
 
   // Filter floor rooms
   const currentFloorRooms = rooms.filter(
-    (r) => r.floor === selectedFloor && r.block === selectedBlock
+    (r) => r.floor === selectedFloor && r.block === selectedBlock &&
+      (r.hostelId ?? r.hostelName ?? '') === activeHostel
   );
 
   const selectedRoomObjects = preferenceIds
@@ -42,6 +65,11 @@ export default function StudentFloorMapPage() {
     .filter((r): r is Room => Boolean(r));
 
   const handleRoomClick = (room: Room) => {
+    if (!canEditPreferences || room.status !== 'available') return;
+    if (room.capacity < (currentGroup?.members.length ?? 0)) {
+      setStatusMessage('This room does not have enough beds for your current group.');
+      return;
+    }
     if (preferenceIds.includes(room.id)) {
       setPreferenceIds(preferenceIds.filter((id) => id !== room.id));
     } else {
@@ -72,10 +100,17 @@ export default function StudentFloorMapPage() {
     setPreferenceIds(preferenceIds.filter((id) => id !== roomId));
   };
 
-  const handleSubmitPreferences = () => {
-    if (!currentGroup) return;
-    savePreferences(currentGroup.id, preferenceIds);
-    setStatusMessage('Room priorities saved and locked for JoSAA round allocation.');
+  const handleSubmitPreferences = async () => {
+    if (!currentGroup || !canEditPreferences) return;
+    setIsSaving(true);
+    try {
+      await savePreferences(currentGroup.id, preferenceIds);
+      setStatusMessage('Room priorities saved for round allocation.');
+    } catch (cause) {
+      setStatusMessage(cause instanceof Error ? cause.message : 'Unable to save room priorities.');
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -114,6 +149,23 @@ export default function StudentFloorMapPage() {
             <button onClick={() => setStatusMessage(null)} className="text-slate-400 hover:text-white text-xs">Dismiss</button>
           </div>
         )}
+        {error && (
+          <div className="p-3 bg-red-50 border border-red-200 rounded text-xs text-red-700 flex items-center justify-between">
+            <span>{error}</span>
+            <button type="button" onClick={() => void refreshData()} className="underline">Retry</button>
+          </div>
+        )}
+        {(allocationStatus?.status === 'UNALLOTTED' || allocationStatus?.status === 'CANCELLED') && allocationStatus.nextStep && (
+          <div className="p-3 bg-amber-50 border border-amber-200 rounded text-xs text-amber-800">
+            {allocationStatus.nextStep}
+          </div>
+        )}
+        {loading && <p className="text-xs text-slate-500">Loading room inventory…</p>}
+        {!canEditPreferences && (
+          <div className="p-3 bg-slate-100 border border-slate-200 rounded text-xs text-slate-600">
+            Room preferences can be changed by the group leader before allocation. Form or join a group during an open round to choose preferences.
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
@@ -144,7 +196,7 @@ export default function StudentFloorMapPage() {
               <div className="flex items-center space-x-2 text-xs">
                 <Layers className="h-4 w-4 text-slate-500" />
                 <span className="font-semibold text-slate-700">Floor:</span>
-                {[1, 2].map((floor) => (
+                {[1, 2, 3, 4, 5].map((floor) => (
                   <button
                     key={floor}
                     type="button"
@@ -169,22 +221,100 @@ export default function StudentFloorMapPage() {
                 </span>
               </div>
 
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-                {currentFloorRooms.map((room) => {
-                  const isSelected = preferenceIds.includes(room.id);
-                  const rankIndex = preferenceIds.indexOf(room.id);
-                  return (
-                    <RoomNode
-                      key={room.id}
-                      room={room}
-                      isSelected={isSelected}
-                      priorityRank={rankIndex !== -1 ? rankIndex + 1 : undefined}
-                      onClick={handleRoomClick}
-                      disabled={!isLeader}
-                    />
-                  );
-                })}
+              <div className="mb-3 flex flex-wrap items-center justify-center gap-2">
+                {hostels.map((hostel) => (
+                  <button
+                    key={hostel.id}
+                    type="button"
+                    onClick={() => setSelectedHostel(hostel.id)}
+                    className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                      activeHostel === hostel.id
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {hostel.name}
+                  </button>
+                ))}
               </div>
+
+              {currentFloorRooms.length === 0 ? (
+                <div className="py-10 text-center text-xs text-slate-400">
+                  {loading ? 'Loading room layout…' : 'No rooms are registered for this hostel, block, and floor.'}
+                </div>
+              ) : (
+                <svg
+                  role="img"
+                  aria-label={`${hostels.find((hostel) => hostel.id === activeHostel)?.name ?? 'Hostel'} block ${selectedBlock}, floor ${selectedFloor} room map`}
+                  viewBox={`0 0 ${Math.max(...currentFloorRooms.map((room) => (room.x ?? 0) + (room.width ?? 80))) + 24} ${Math.max(...currentFloorRooms.map((room) => (room.y ?? 0) + (room.height ?? 80))) + 24}`}
+                  className="w-full h-auto min-h-56"
+                >
+                  {currentFloorRooms.map((room) => {
+                    const isSelected = preferenceIds.includes(room.id) && room.status === 'available';
+                    const canSelectRoom = canEditPreferences &&
+                      room.status === 'available' &&
+                      room.capacity >= (currentGroup?.members.length ?? 0);
+                    const rankIndex = preferenceIds.indexOf(room.id);
+                    const fill = room.status === 'occupied'
+                      ? '#e2e8f0'
+                      : room.status === 'reserved'
+                        ? '#fef3c7'
+                        : isSelected ? '#4f46e5' : '#ffffff';
+                    const stroke = room.status === 'reserved'
+                      ? '#f59e0b'
+                      : room.status === 'occupied'
+                        ? '#cbd5e1'
+                        : isSelected
+                          ? '#4338ca'
+                          : '#64748b';
+                    return (
+                      <g
+                        key={room.id}
+                        role={canSelectRoom ? 'button' : undefined}
+                        tabIndex={canSelectRoom ? 0 : undefined}
+                        aria-label={`Room ${room.roomNumber}, capacity ${room.capacity}, ${room.status}`}
+                        onClick={() => handleRoomClick(room)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            handleRoomClick(room);
+                          }
+                        }}
+                        className={canSelectRoom ? 'cursor-pointer' : 'cursor-default'}
+                      >
+                        <rect
+                          x={room.x ?? 0}
+                          y={room.y ?? 0}
+                          width={room.width ?? 80}
+                          height={room.height ?? 80}
+                          rx="8"
+                          fill={fill}
+                          stroke={stroke}
+                          strokeWidth={isSelected ? 3 : 1.5}
+                          opacity={room.status === 'occupied' ? 0.65 : 1}
+                        />
+                        <text
+                          x={(room.x ?? 0) + (room.width ?? 80) / 2}
+                          y={(room.y ?? 0) + (room.height ?? 80) / 2 - 4}
+                          textAnchor="middle"
+                          className={`font-mono text-[12px] font-bold ${isSelected ? 'fill-white' : 'fill-slate-800'}`}
+                        >
+                          {room.roomNumber}
+                        </text>
+                        <text
+                          x={(room.x ?? 0) + (room.width ?? 80) / 2}
+                          y={(room.y ?? 0) + (room.height ?? 80) / 2 + 14}
+                          textAnchor="middle"
+                          className={`font-mono text-[10px] ${isSelected ? 'fill-indigo-100' : 'fill-slate-500'}`}
+                        >
+                          {isSelected ? `Priority ${rankIndex + 1}` : `${room.capacity}-bed · ${room.status}`}
+                        </text>
+                        <title>{`${room.roomNumber}: ${room.capacity}-bed, ${room.status}`}</title>
+                      </g>
+                    );
+                  })}
+                </svg>
+              )}
 
               {/* Legend */}
               <div className="flex flex-wrap items-center justify-center gap-4 text-[11px] text-slate-500 border-t border-slate-100 pt-5 mt-6">
@@ -216,6 +346,8 @@ export default function StudentFloorMapPage() {
               onMoveDown={handleMoveDown}
               onRemove={handleRemove}
               onSubmit={handleSubmitPreferences}
+              isSubmitting={isSaving}
+              isReadOnly={!canEditPreferences}
             />
           </div>
 

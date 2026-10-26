@@ -11,6 +11,7 @@ interface PrioritySelectorProps {
   onRemove: (roomId: string) => void;
   onSubmit: () => void;
   isSubmitting?: boolean;
+  isReadOnly?: boolean;
 }
 
 export default function PrioritySelector({
@@ -20,6 +21,7 @@ export default function PrioritySelector({
   onRemove,
   onSubmit,
   isSubmitting = false,
+  isReadOnly = false,
 }: PrioritySelectorProps) {
   const canSubmit = selectedRooms.length >= 3 && selectedRooms.length <= 4;
 
@@ -63,7 +65,7 @@ export default function PrioritySelector({
               <div className="flex items-center space-x-1">
                 <button
                   type="button"
-                  disabled={index === 0}
+                  disabled={isReadOnly || index === 0}
                   onClick={() => onMoveUp(index)}
                   className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 transition-colors"
                   title="Move Up"
@@ -72,7 +74,7 @@ export default function PrioritySelector({
                 </button>
                 <button
                   type="button"
-                  disabled={index === selectedRooms.length - 1}
+                  disabled={isReadOnly || index === selectedRooms.length - 1}
                   onClick={() => onMoveDown(index)}
                   className="p-1 text-slate-500 hover:text-slate-800 disabled:opacity-30 transition-colors"
                   title="Move Down"
@@ -81,8 +83,9 @@ export default function PrioritySelector({
                 </button>
                 <button
                   type="button"
+                  disabled={isReadOnly}
                   onClick={() => onRemove(room.id)}
-                  className="p-1 text-rose-500 hover:text-rose-700 transition-colors"
+                  className="p-1 text-rose-500 hover:text-rose-700 transition-colors disabled:opacity-30"
                   title="Remove Choice"
                 >
                   <Trash2 className="h-3.5 w-3.5" />
@@ -96,10 +99,10 @@ export default function PrioritySelector({
       <div className="pt-2">
         <button
           type="button"
-          disabled={!canSubmit || isSubmitting}
+          disabled={!canSubmit || isSubmitting || isReadOnly}
           onClick={onSubmit}
           className={`w-full py-2.5 px-4 rounded text-xs font-semibold flex items-center justify-center space-x-1.5 transition-colors ${
-            canSubmit && !isSubmitting
+            canSubmit && !isSubmitting && !isReadOnly
               ? 'bg-slate-900 hover:bg-slate-800 text-white'
               : 'bg-slate-100 text-slate-400 border border-slate-200 cursor-not-allowed'
           }`}

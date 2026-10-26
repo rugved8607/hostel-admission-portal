@@ -7,11 +7,10 @@ import {
   Users, UserPlus, Lock, LockOpen, ArrowRight,
   Copy, Check, AlertTriangle, CheckCircle2,
   Building2, LogOut, Info, Loader2, Key,
-  ClipboardList, ShieldCheck, Hash,
+  ShieldCheck,
 } from 'lucide-react'
 import { useMockData } from '@/context/MockDataContext'
 import GroupMemberCard from '@/components/group/GroupMemberCard'
-import AddMemberModal from '@/components/group/AddMemberModal'
 import type { Group } from '@/lib/types'
 
 // ─── Shared nav (inline) ─────────────────────────────────────────────────────
@@ -32,7 +31,7 @@ function TopNav({ name, onLogout }: { name: string; onLogout: () => void }) {
             { href: '/student/dashboard', label: 'Dashboard' },
             { href: '/student/apply',     label: 'Application' },
             { href: '/student/group',     label: 'Group' },
-            { href: '/student/rooms',     label: 'Rooms' },
+            { href: '/student/floor-map', label: 'Rooms' },
           ].map(({ href, label }) => (
             <Link
               key={href}
@@ -158,8 +157,8 @@ export default function StudentGroupPage() {
   const router = useRouter()
   const {
     session, students, groups, currentStudent, isHydrated,
-    createGroup, joinGroup, leaveGroup, lockGroup,
-    logout, groupsPublished,
+    createGroup, joinGroup, leaveGroup, lockGroup, dissolveGroup,
+    logout, loading, error, openGroups, allocationStatus, refreshData,
   } = useMockData()
 
   // Auth guard
@@ -177,15 +176,14 @@ export default function StudentGroupPage() {
 
   // ── Derive current group ───────────────────────────────────────────────────
 
-  const myGroup: Group | null =
-    groups.find((g) => g.members.some((m) => m.studentId === currentUserId)) ?? null
+  const myGroup: Group | null = groups[0] ?? null
 
   const isGroupHead = myGroup?.headStudentId === currentUserId
   const isLocked = myGroup?.status === 'locked'
+  const isUnallottedGroup = myGroup?.allocationStatus === 'unallotted'
 
   // ── No-group UI state ─────────────────────────────────────────────────────
 
-  const [noGroupTab, setNoGroupTab] = useState<'create' | 'join'>('create')
   const [selectedSize, setSelectedSize] = useState<3 | 4>(3)
   const [creating, setCreating]         = useState(false)
   const [createError, setCreateError]   = useState<string | null>(null)
@@ -195,11 +193,11 @@ export default function StudentGroupPage() {
 
   // ── Has-group UI state ────────────────────────────────────────────────────
 
-  const [addModalOpen, setAddModalOpen]   = useState(false)
   const [lockConfirm, setLockConfirm]     = useState(false)
   const [locking, setLocking]             = useState(false)
   const [lockError, setLockError]         = useState<string | null>(null)
   const [removeError, setRemoveError]     = useState<string | null>(null)
+  const [dissolving, setDissolving]       = useState(false)
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
@@ -208,18 +206,18 @@ export default function StudentGroupPage() {
     setCreating(true)
     setCreateError(null)
     await new Promise((r) => setTimeout(r, 700))
-    const res = createGroup(currentUserId, selectedSize)
+    const res = await createGroup(currentUserId, selectedSize)
     setCreating(false)
     if (!res.success) setCreateError(res.error ?? 'Could not create group.')
   }, [currentUserId, selectedSize, createGroup])
 
   const handleJoin = useCallback(async () => {
-    const code = joinCode.trim().toUpperCase()
-    if (!code || !currentUserId) return
+    const groupId = joinCode.trim()
+    if (!groupId || !currentUserId) return
     setJoining(true)
     setJoinError(null)
     await new Promise((r) => setTimeout(r, 700))
-    const res = joinGroup(code, currentUserId)
+    const res = await joinGroup(groupId, currentUserId)
     setJoining(false)
     if (!res.success) setJoinError(res.error ?? 'Could not join group.')
   }, [joinCode, currentUserId, joinGroup])
@@ -227,7 +225,7 @@ export default function StudentGroupPage() {
   const handleRemoveMember = useCallback(
     async (studentId: string) => {
       setRemoveError(null)
-      const res = leaveGroup(studentId)
+      const res = await leaveGroup(studentId)
       if (!res.success) setRemoveError(res.error ?? 'Could not remove member.')
     },
     [leaveGroup]
@@ -235,7 +233,7 @@ export default function StudentGroupPage() {
 
   const handleLeaveGroup = useCallback(async () => {
     if (!currentUserId) return
-    const res = leaveGroup(currentUserId)
+    const res = await leaveGroup(currentUserId)
     if (!res.success) setRemoveError(res.error ?? 'Could not leave group.')
   }, [currentUserId, leaveGroup])
 
@@ -244,11 +242,20 @@ export default function StudentGroupPage() {
     setLocking(true)
     setLockError(null)
     await new Promise((r) => setTimeout(r, 700))
-    const res = lockGroup(myGroup.id)
+    const res = await lockGroup(myGroup.id)
     setLocking(false)
     setLockConfirm(false)
     if (!res.success) setLockError(res.error ?? 'Could not lock group.')
   }, [myGroup, lockGroup])
+
+  const handleDissolve = useCallback(async () => {
+    if (!myGroup) return
+    setDissolving(true)
+    setRemoveError(null)
+    const result = await dissolveGroup(myGroup.id)
+    setDissolving(false)
+    if (!result.success) setRemoveError(result.error ?? 'Could not dissolve group.')
+  }, [myGroup, dissolveGroup])
 
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -260,15 +267,6 @@ export default function StudentGroupPage() {
 
   return (
     <>
-      {/* Add member modal (only when group exists and open) */}
-      {myGroup && (
-        <AddMemberModal
-          isOpen={addModalOpen}
-          onClose={() => setAddModalOpen(false)}
-          group={myGroup}
-        />
-      )}
-
       <div className="min-h-screen bg-slate-50 flex flex-col">
         <TopNav name={student?.name ?? ''} onLogout={handleLogout} />
 
@@ -283,8 +281,24 @@ export default function StudentGroupPage() {
               </p>
             </div>
 
+            {error && (
+              <div className="flex items-center justify-between p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                <span>{error}</span>
+                <button type="button" onClick={() => void refreshData()} className="underline">Retry</button>
+              </div>
+            )}
+            {loading && <p className="text-xs text-slate-500">Loading your group and current-round status…</p>}
+            {(allocationStatus?.status === 'UNALLOTTED' || allocationStatus?.status === 'CANCELLED') && allocationStatus.nextStep && (
+              <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+                <p className="text-sm font-bold text-amber-800">
+                  {allocationStatus.status === 'CANCELLED' ? 'Your previous allotment was cancelled.' : 'No room was allotted for your previous group.'}
+                </p>
+                <p className="text-xs text-amber-700 mt-1">{allocationStatus.nextStep}</p>
+              </div>
+            )}
+
             {/* Eligibility gate */}
-            {!isApproved && (
+            {!loading && !isApproved && (
               <div className="flex items-start gap-3 p-4 bg-amber-50 border border-amber-200 rounded-xl">
                 <AlertTriangle size={16} className="text-amber-600 mt-0.5 flex-shrink-0" />
                 <div>
@@ -368,20 +382,20 @@ export default function StudentGroupPage() {
                   <div className="px-5 py-4 border-b border-slate-100">
                     <p className="text-sm font-bold text-slate-800">Join an Existing Group</p>
                     <p className="text-xs text-slate-500 mt-0.5">
-                      Enter the invite code shared by your group leader.
+                      Enter a group ID shared by a group member, or select an open group below.
                     </p>
                   </div>
                   <div className="px-5 py-5 space-y-4">
                     <div>
                       <label className="block text-xs font-semibold text-slate-600 mb-1.5">
-                        Invite Code <span className="text-red-500">*</span>
+                        Group ID <span className="text-red-500">*</span>
                       </label>
                       <input
                         type="text"
                         value={joinCode}
                         onChange={(e) => { setJoinCode(e.target.value.toUpperCase()); setJoinError(null) }}
                         onKeyDown={(e) => e.key === 'Enter' && !joining && handleJoin()}
-                        placeholder="e.g. GRP-7X2K"
+                        placeholder="Paste a group UUID"
                         spellCheck={false}
                         className="w-full px-3 py-2.5 font-mono text-sm border border-slate-300 rounded-lg outline-none focus:ring-2 focus:ring-blue-100 focus:border-blue-500 placeholder:font-sans placeholder:text-xs placeholder:text-slate-400"
                       />
@@ -407,11 +421,28 @@ export default function StudentGroupPage() {
                       )}
                     </button>
 
+                    {openGroups.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-xs font-semibold text-slate-600">Open groups this round</p>
+                        {openGroups.map((group) => (
+                          <button
+                            key={group.id}
+                            type="button"
+                            onClick={() => { setJoinCode(group.id); setJoinError(null) }}
+                            className="w-full flex items-center justify-between p-2.5 bg-slate-50 border border-slate-200 rounded text-left text-xs hover:border-blue-300"
+                          >
+                            <span className="font-mono text-slate-700">{group.id}</span>
+                            <span className="text-slate-500">{group.members.length}/4 members</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
                     <div className="p-3 bg-blue-50 border border-blue-100 rounded-lg">
                       <div className="flex items-start gap-1.5">
                         <Info size={12} className="text-blue-500 mt-0.5 flex-shrink-0" />
                         <p className="text-xs text-blue-700 leading-relaxed">
-                          Demo code: <span className="font-mono font-bold">GRP-7X2K</span> — try it to test the join flow.
+                          A student joins using their own signed-in account. Group membership is verified by the server.
                         </p>
                       </div>
                     </div>
@@ -458,16 +489,7 @@ export default function StudentGroupPage() {
                   {/* Head actions */}
                   {isGroupHead && !isLocked && (
                     <div className="flex items-center gap-2">
-                      {myGroup.members.length < myGroup.maxSize && (
-                        <button
-                          type="button"
-                          onClick={() => setAddModalOpen(true)}
-                          className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-blue-700 border border-blue-200 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
-                        >
-                          <UserPlus size={13} />
-                          Add Member
-                        </button>
-                      )}
+                      <span className="text-xs text-slate-500">Share this group ID so members can join themselves.</span>
                     </div>
                   )}
                 </div>
@@ -523,7 +545,7 @@ export default function StudentGroupPage() {
                           </div>
                           <p className="text-xs text-slate-400 italic">
                             {isGroupHead
-                              ? 'Empty slot — click "Add Member" to invite a student.'
+                              ? 'Empty slot — share the group ID so a student can join.'
                               : 'Waiting for member…'}
                           </p>
                         </div>
@@ -549,8 +571,7 @@ export default function StudentGroupPage() {
                       <div>
                         <p className="text-sm font-bold text-slate-800">Lock & Finalise Group</p>
                         <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                          Locking prevents further changes to membership. The group must have
-                          at least 3 members. This action cannot be undone from the student side.
+                          Submit the group for allocation. It must contain exactly 3 or 4 members.
                         </p>
                       </div>
                     </div>
@@ -559,7 +580,7 @@ export default function StudentGroupPage() {
                       <div className="flex items-center gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg mb-4">
                         <AlertTriangle size={13} className="text-amber-600 flex-shrink-0" />
                         <p className="text-xs text-amber-800 font-medium">
-                          Minimum 3 members required to lock. Add {3 - myGroup.members.length} more member{3 - myGroup.members.length > 1 ? 's' : ''}.
+                          Minimum 3 members required to submit. Invite {3 - myGroup.members.length} more member{3 - myGroup.members.length > 1 ? 's' : ''}.
                         </p>
                       </div>
                     )}
@@ -579,15 +600,14 @@ export default function StudentGroupPage() {
                         className="flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         <Lock size={14} />
-                        Lock Group ({myGroup.members.length} members)
+                        Submit Group ({myGroup.members.length} members)
                       </button>
                     ) : (
                       <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl space-y-3">
                         <div className="flex items-start gap-2">
                           <AlertTriangle size={14} className="text-amber-600 mt-0.5 flex-shrink-0" />
                           <p className="text-xs text-amber-800 font-medium leading-relaxed">
-                            Confirm that all {myGroup.members.length} members are finalised. After locking,
-                            no member changes are possible. Only an admin can dissolve the group.
+                            Confirm that all {myGroup.members.length} members are finalised. The group will be submitted for allocation.
                           </p>
                         </div>
                         <div className="flex gap-2">
@@ -597,7 +617,7 @@ export default function StudentGroupPage() {
                             disabled={locking}
                             className="flex items-center gap-2 px-4 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors disabled:opacity-60"
                           >
-                            {locking ? <><Loader2 size={13} className="animate-spin" />Locking…</> : 'Confirm Lock'}
+                            {locking ? <><Loader2 size={13} className="animate-spin" />Submitting…</> : 'Confirm Submit'}
                           </button>
                           <button
                             type="button"
@@ -610,42 +630,63 @@ export default function StudentGroupPage() {
                         </div>
                       </div>
                     )}
+
+                    {(!isLocked || isUnallottedGroup) && (
+                      <button
+                        type="button"
+                        onClick={() => void handleDissolve()}
+                        disabled={dissolving}
+                        className="text-xs font-semibold text-red-500 hover:text-red-700 border border-red-200 hover:border-red-300 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        {dissolving ? 'Dissolving…' : isUnallottedGroup ? 'Dissolve to Reform Group' : 'Dissolve Group'}
+                      </button>
+                    )}
                   </div>
                 )}
 
                 {/* ── Locked — Phase 3 gateway ───────────────────────────── */}
                 {isLocked && (
                   <div className={`border rounded-xl p-5 ${
-                    groupsPublished
-                      ? 'bg-emerald-50 border-emerald-200'
-                      : 'bg-slate-50 border-slate-200'
+                    isUnallottedGroup
+                      ? 'bg-amber-50 border-amber-200'
+                      : myGroup.allocationStatus === 'allotted'
+                        ? 'bg-emerald-50 border-emerald-200'
+                        : 'bg-slate-50 border-slate-200'
                   }`}>
                     <div className="flex items-start gap-3">
                       <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
-                        groupsPublished ? 'bg-emerald-100' : 'bg-slate-200'
+                        isUnallottedGroup ? 'bg-amber-100' : myGroup.allocationStatus === 'allotted' ? 'bg-emerald-100' : 'bg-slate-200'
                       }`}>
-                        {groupsPublished
-                          ? <CheckCircle2 size={20} className="text-emerald-600" />
-                          : <Lock size={20} className="text-slate-500" />}
+                        {isUnallottedGroup
+                          ? <AlertTriangle size={20} className="text-amber-600" />
+                          : myGroup.allocationStatus === 'allotted'
+                            ? <CheckCircle2 size={20} className="text-emerald-600" />
+                            : <Lock size={20} className="text-slate-500" />}
                       </div>
                       <div className="flex-1">
                         <p className="text-sm font-bold text-slate-800">
-                          {groupsPublished ? 'Floor Map Unlocked — Proceed to Room Selection' : 'Group Locked — Awaiting Admin Publish'}
+                          {isUnallottedGroup
+                            ? 'No Room Allotted — Reform for the Next Round'
+                            : myGroup.allocationStatus === 'allotted'
+                              ? 'Room Allotted'
+                              : 'Group Submitted — Set Room Preferences'}
                         </p>
                         <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">
-                          {groupsPublished
-                            ? 'The admin has published the approved group list. Your group is eligible for room selection. Proceed to Phase 3.'
-                            : 'Your group is finalised. The admin must publish the approved group list before the floor map is unlocked for selection.'}
+                          {isUnallottedGroup
+                            ? allocationStatus?.nextStep ?? 'Dissolve this group and form or join a new group when the next round opens.'
+                            : myGroup.allocationStatus === 'allotted'
+                              ? `Your group has been allotted room ${myGroup.allottedRoomNumber ?? ''}.`
+                              : 'Choose and save your ordered room preferences before allocation is run.'}
                         </p>
                       </div>
                     </div>
 
-                    {groupsPublished && (
+                    {myGroup.allocationStatus === 'pending' && (
                       <Link
-                        href="/student/rooms"
+                        href="/student/floor-map"
                         className="mt-4 inline-flex items-center gap-2 px-5 py-2.5 text-sm font-bold text-white bg-blue-700 hover:bg-blue-800 rounded-lg transition-colors"
                       >
-                        Proceed to Room Selection
+                        Set Room Preferences
                         <ArrowRight size={15} />
                       </Link>
                     )}
@@ -656,8 +697,7 @@ export default function StudentGroupPage() {
                 <div className="flex items-start gap-2 p-3 bg-slate-50 border border-slate-200 rounded-lg">
                   <Info size={13} className="text-slate-400 mt-0.5 flex-shrink-0" />
                   <p className="text-xs text-slate-400 leading-relaxed">
-                    Group membership, eligibility, and collision detection shown here are illustrative.
-                    All rules will be enforced server-side when the backend is connected.
+                    Group membership, eligibility, and allocation rules are checked by the portal server.
                   </p>
                 </div>
               </>

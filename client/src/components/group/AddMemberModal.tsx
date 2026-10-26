@@ -36,7 +36,7 @@ function rolNorm(r: string): string {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export default function AddMemberModal({ isOpen, onClose, group }: AddMemberModalProps) {
-  const { students, groups, joinGroup } = useMockData()
+  const { students, groups, currentStudent, joinGroup } = useMockData()
 
   const [rollInput, setRollInput]   = useState('')
   const [phase, setPhase]           = useState<SearchPhase>('idle')
@@ -72,6 +72,16 @@ export default function AddMemberModal({ isOpen, onClose, group }: AddMemberModa
     // 2. Must not be the current user's own roll (can't add yourself)
     // (This won't normally happen if the head is already in the group,
     //  but check anyway)
+    if (student.id !== currentStudent?.id) {
+      setResult({
+        student,
+        errorTitle: 'Students Must Join Themselves',
+        errorDetail: 'Ask this student to sign in and join the group using its group ID.',
+      })
+      setPhase('error')
+      return
+    }
+
     if (group.members.some((m) => m.studentId === student.id)) {
       setResult({
         student,
@@ -122,16 +132,14 @@ export default function AddMemberModal({ isOpen, onClose, group }: AddMemberModa
     // All checks passed
     setResult({ student, errorTitle: null, errorDetail: null })
     setPhase('found')
-  }, [rollInput, students, groups, group])
+  }, [rollInput, students, groups, group, currentStudent?.id])
 
   // ── Add action ────────────────────────────────────────────────────────────
 
   const handleAdd = async () => {
     if (!result.student) return
     setAdding(true)
-    await new Promise((r) => setTimeout(r, 600))
-
-    const res = joinGroup(group.inviteCode, result.student.id)
+    const res = await joinGroup(group.id, result.student.id)
     setAdding(false)
 
     if (res.success) {

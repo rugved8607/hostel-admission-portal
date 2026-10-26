@@ -135,6 +135,10 @@ export interface StudentGroup {
   isLocked: boolean
   preferences: string[]
   allottedRoomId?: string
+  allottedRoomNumber?: string
+  meritRank?: number
+  tieBreakNote?: string
+  allocationReason?: string
   allocationStatus: 'pending' | 'allotted' | 'unallotted'
 }
 
@@ -148,6 +152,12 @@ export interface Room {
   capacity: number
   status: 'available' | 'occupied' | 'reserved'
   allottedGroupId?: string
+  x?: number
+  y?: number
+  width?: number
+  height?: number
+  hostelId?: string
+  hostelName?: string
 }
 
 export interface AuthSession {

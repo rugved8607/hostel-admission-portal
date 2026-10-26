@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useMockData } from '@/context/MockDataContext'
 
 export default function AdminGroupsPage() {
-  const { groups } = useMockData()
+  const { groups, loading, error, refreshData } = useMockData()
 
   return (
     <main className="min-h-screen bg-slate-50 px-6 py-8 text-slate-800">
@@ -18,6 +18,13 @@ export default function AdminGroupsPage() {
           <h1 className="text-xl font-bold">Student Groups</h1>
           <p className="mt-1 text-xs text-slate-500">Review membership and room-allocation preferences.</p>
         </header>
+        {error && (
+          <div className="flex items-center justify-between rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">
+            <span>{error}</span>
+            <button type="button" onClick={() => void refreshData()} className="font-semibold underline">Retry</button>
+          </div>
+        )}
+        {loading && <p className="text-xs text-slate-500">Loading groups…</p>}
         <section className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
           <table className="w-full text-left text-xs">
             <thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
@@ -41,7 +48,7 @@ export default function AdminGroupsPage() {
                   <td className="px-4 py-3 capitalize">{group.status}</td>
                 </tr>
               ))}
-              {groups.length === 0 && (
+              {!loading && groups.length === 0 && (
                 <tr>
                   <td colSpan={5} className="px-4 py-10 text-center text-slate-400">No student groups have been formed.</td>
                 </tr>

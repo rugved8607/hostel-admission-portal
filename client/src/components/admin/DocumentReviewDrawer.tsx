@@ -1,13 +1,13 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState } from 'react'
 import {
   X, FileText, FileImage, CheckCircle2, XCircle,
   AlertTriangle, ChevronDown, ChevronUp, User,
   ClipboardList, MapPin, Paperclip, Loader2,
 } from 'lucide-react'
 import { useMockData } from '@/context/MockDataContext'
-import type { Application, Student, StudentStatus, DocumentMeta } from '@/lib/types'
+import type { StudentStatus, DocumentMeta } from '@/lib/types'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -149,10 +149,14 @@ export default function DocumentReviewDrawer({
 
   // Mark as under_review when opened (if submitted)
   useEffect(() => {
-    if (isOpen && app && app.status === 'application_submitted') {
-      updateApplicationStatus(app.id, 'under_review', {})
+    let active = true
+    if (isOpen && app?.status === 'application_submitted') {
+      void updateApplicationStatus(app.id, 'under_review', {}).catch((cause: unknown) => {
+        if (active) setActionError(cause instanceof Error ? cause.message : 'Unable to mark this application under review.')
+      })
     }
-  }, [isOpen, applicationId]) // intentionally only dep on id/open
+    return () => { active = false }
+  }, [isOpen, app, updateApplicationStatus])
 
   // Handle keyboard ESC
   useEffect(() => {
@@ -179,27 +183,28 @@ export default function DocumentReviewDrawer({
     }
 
     setSaving(true)
-    await new Promise((r) => setTimeout(r, 800))
-
     const targetStatus: StudentStatus =
       action === 'approve'    ? 'approved' :
       action === 'reject'     ? 'rejected'  :
       'correction_required'
 
-    updateApplicationStatus(app!.id, targetStatus, {
-      adminRemarks:    adminRemarks.trim() || undefined,
-      correctionNotes: correctionNotes.trim() || undefined,
-      verifiedCgpa:    action === 'approve' ? parseFloat(verifiedCgpa) : undefined,
-      verifiedBy:      'Admin',
-    })
-
-    setSaving(false)
-    setSuccess(
-      action === 'approve'    ? 'Application approved and marked as verified.'  :
-      action === 'reject'     ? 'Application has been rejected.'                :
-      'Correction request sent to the student.'
-    )
-    setAction(null)
+    try {
+      await updateApplicationStatus(app!.id, targetStatus, {
+        adminRemarks:    adminRemarks.trim() || undefined,
+        correctionNotes: correctionNotes.trim() || undefined,
+        verifiedCgpa:    action === 'approve' ? parseFloat(verifiedCgpa) : undefined,
+      })
+      setSuccess(
+        action === 'approve'    ? 'Application approved and marked as verified.'  :
+        action === 'reject'     ? 'Application has been rejected.'                :
+        'Correction request sent to the student.'
+      )
+      setAction(null)
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : 'Unable to update the application.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   if (!isOpen) return null

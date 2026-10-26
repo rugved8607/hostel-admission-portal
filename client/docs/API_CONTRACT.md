@@ -18,13 +18,18 @@ student CGPA, group average, or maximum CGPA.
 
 | Method and path | Request | Result |
 | --- | --- | --- |
+| `POST /api/applications/me` | `{ "phone": "...", "address": { "street": "...", "city": "...", "state": "...", "pincode": "..." } }` | Submits the caller's application and saves their phone/address details. |
+| `GET /api/students/me` | None | The caller's own student profile and application status. |
+| `GET /api/students/lookup?rollNo=...` | Roll number query | Resolves the student login identifier to an email address. |
+| `GET /api/groups/open` | None | Forming groups in the currently open round. |
+| `GET /api/rooms` | None | Room inventory matching the caller's hostel gender, including geometry and status. |
 | `GET /api/groups/me` | None | The caller's current group and allocation/next-step status. Does not expose other students' unrelated groups. |
 | `POST /api/groups` | `{}` | Creates a one-member `FORMING` group in the open round; the creator is its leader. |
 | `POST /api/groups/join` | `{ "groupId": "<uuid>" }` | Joins a current-round forming group. Maximum size is four. |
 | `POST /api/groups/{groupId}/leave` | None | Removes the caller from the group. A submitted group becomes forming; groups below three cannot be submitted. |
 | `POST /api/groups/{groupId}/dissolve` | None | Deletes group membership, marks the group `DISSOLVED`, and writes an audit event. |
 | `POST /api/groups/{groupId}/submit` | None | Submits the group only when it has exactly three or four same-gender members. |
-| `PUT /api/groups/{groupId}/preferences` | `{ "preferences": ["<room-uuid>", ...] }` | Stores ordered room IDs for a forming group. |
+| `PUT /api/groups/{groupId}/preferences` | `{ "preferences": ["<room-uuid>", ...] }` | Stores ordered room IDs for a forming or submitted group before allocation. |
 
 The schema has no invite-code column, so joining uses a group UUID, not an
 invite code. Every group mutation requires an open formation round and an
@@ -36,6 +41,8 @@ constraint provides a final safeguard against multiple memberships.
 
 | Method and path | Request | Result |
 | --- | --- | --- |
+| `GET /api/admin/applications` | None | Student profiles and application review records for the verification desk. |
+| `PATCH /api/admin/applications/{studentId}` | `{ "status": "under_review \| approved \| rejected \| correction_required", ... }` | Updates review status, reason, and verified CGPA on approval. |
 | `GET /api/admin/rounds` | None | Round history with group, snapshot, and allotment counts. |
 | `POST /api/admin/rounds` | `{ "formationDeadline": "<ISO timestamp>", "tieBreakRule": "ROLL_NO_ASC \| MAX_CGPA_THEN_ROLL_NO \| GROUP_CREATED_ASC" }` | Creates the next `DRAFT` round. Initial round number is 1. |
 | `PATCH /api/admin/rounds/{roundId}/settings` | Same settings body | Sets the future deadline and tie-break rule while the round is `DRAFT` or `FORMATION_OPEN`. |

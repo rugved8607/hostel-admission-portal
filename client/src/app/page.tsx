@@ -40,8 +40,8 @@ export default function LoginPage() {
 
     const result =
       mode === 'student'
-        ? loginAsStudent(identifier.trim(), password)
-        : loginAsAdmin(identifier.trim(), password)
+        ? await loginAsStudent(identifier.trim(), password)
+        : await loginAsAdmin(identifier.trim(), password)
 
     setLoading(false)
 

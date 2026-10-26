@@ -1,59 +1,70 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { CheckCircle2, AlertCircle, ArrowRight, Upload, FileText, Check } from 'lucide-react';
+import { CheckCircle2, AlertCircle, ArrowRight, FileText } from 'lucide-react';
 import { useMockData } from '@/context/MockDataContext';
 
 export default function StudentApplyPage() {
   const router = useRouter();
-  const { currentStudent, updateApplicationStatus } = useMockData();
+  const { currentStudent, submitApplication, loading, error } = useMockData();
   const [submitted, setSubmitted] = useState(false);
-
-  // Fallback defaults to ensure no undefined property crash
-  const student = currentStudent || {
-    id: 'std_1',
-    name: 'Aarav Sharma',
-    rollNo: '21BCE1042',
-    branch: 'Computer Science',
-    year: 3,
-    cgpa: 9.15,
-    phone: '9876543210',
-    address: {
-      street: '12 Sector 4',
-      city: 'Bhopal',
-      pincode: '462001',
-      state: 'MP',
-    },
-    status: 'approved',
-  };
+  const student = currentStudent;
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
 
   const [formData, setFormData] = useState({
-    name: student.name,
-    rollNo: student.rollNo,
-    branch: student.branch,
-    year: student.year,
-    phone: student.phone,
-    street: student.address?.street || '12 Sector 4',
-    city: student.address?.city || 'Bhopal',
-    pincode: student.address?.pincode || '462001',
-    state: student.address?.state || 'MP',
+    name: student?.name ?? '',
+    rollNo: student?.rollNo ?? '',
+    branch: student?.branch ?? '',
+    year: student?.year ?? 1,
+    phone: student?.phone ?? '',
+    street: student?.address.street ?? '',
+    city: student?.address.city ?? '',
+    pincode: student?.address.pincode ?? '',
+    state: student?.address.state ?? '',
   });
 
-  const [uploadedDocs, setUploadedDocs] = useState<{ [key: string]: boolean }>({
-    'Govt Photo ID': true,
-    'Semester Marksheet': true,
-    'Hostel Fee Clearance': true,
-    'Student Identity Card': true,
-  });
+  useEffect(() => {
+    if (!student) return;
+    const timeout = window.setTimeout(() => {
+      setFormData({
+        name: student.name,
+        rollNo: student.rollNo,
+        branch: student.branch,
+        year: student.year,
+        phone: student.phone,
+        street: student.address.street,
+        city: student.address.city,
+        pincode: student.address.pincode,
+        state: student.address.state,
+      });
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [student]);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (student.id) {
-      updateApplicationStatus(student.id, 'submitted');
+    if (!student) return;
+    setSubmitting(true);
+    setFormError(null);
+    try {
+      await submitApplication({
+        phone: formData.phone,
+        address: {
+          street: formData.street,
+          city: formData.city,
+          state: formData.state,
+          pincode: formData.pincode,
+        },
+      });
+      setSubmitted(true);
+    } catch (cause) {
+      setFormError(cause instanceof Error ? cause.message : 'Unable to submit the application.');
+    } finally {
+      setSubmitting(false);
     }
-    setSubmitted(true);
   };
 
   return (
@@ -77,7 +88,16 @@ export default function StudentApplyPage() {
           </Link>
         </div>
 
-        {submitted ? (
+        {(error || formError) && (
+          <div className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">{formError ?? error}</div>
+        )}
+        {!student && (
+          <div className="rounded border border-slate-200 bg-white p-6 text-center text-xs text-slate-500">
+            {loading ? 'Loading your student profile…' : 'Student profile unavailable. Sign in with a student account and retry.'}
+          </div>
+        )}
+
+        {!student ? null : submitted ? (
           <div className="bg-white border border-slate-200 rounded-lg p-8 text-center space-y-4 shadow-sm">
             <CheckCircle2 className="h-12 w-12 text-emerald-600 mx-auto" />
             <div>
@@ -194,19 +214,19 @@ export default function StudentApplyPage() {
               <p className="text-xs text-slate-500 mb-3">Official scans verified against university student records.</p>
               
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                {Object.keys(uploadedDocs).map((docName) => (
+                {['Govt Photo ID', 'Semester Marksheet', 'Hostel Fee Clearance', 'Student Identity Card'].map((docName) => (
                   <div key={docName} className="p-3 border border-slate-200 rounded-lg flex items-center justify-between bg-slate-50/50">
                     <div className="flex items-center space-x-2.5">
-                      <FileText className="h-4 w-4 text-slate-500" />
+                      <FileText className="h-4 w-4 text-slate-400" />
                       <div>
                         <span className="font-medium text-slate-800 block">{docName}</span>
-                        <span className="text-[10px] text-emerald-600 font-mono flex items-center mt-0.5">
-                          <Check className="h-3 w-3 mr-0.5" /> Attached & verified
+                        <span className="text-[10px] text-slate-500 font-mono flex items-center mt-0.5">
+                          Not uploaded
                         </span>
                       </div>
                     </div>
                     <span className="text-[10px] bg-white border border-slate-200 px-2 py-0.5 rounded text-slate-500 font-mono">
-                      PDF &bull; 1.2MB
+                      Required
                     </span>
                   </div>
                 ))}
@@ -220,9 +240,10 @@ export default function StudentApplyPage() {
               </div>
               <button
                 type="submit"
-                className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded text-xs font-semibold transition-colors"
+                disabled={!student || submitting}
+                className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded text-xs font-semibold transition-colors disabled:opacity-50"
               >
-                Submit Application
+                {submitting ? 'Submitting…' : 'Submit Application'}
               </button>
             </div>
           </form>

@@ -57,6 +57,13 @@ async function assertCanJoinGroup(tx: Transaction, studentId: string) {
     }
     throw new ApiError(409, 'ALREADY_IN_GROUP', 'Leave or dissolve your current group before joining another.')
   }
+  const application = await tx.application.findUnique({
+    where: { studentId },
+    select: { status: true },
+  })
+  if (application?.status !== 'APPROVED') {
+    throw new ApiError(403, 'APPLICATION_NOT_APPROVED', 'Your hostel application must be approved before forming or joining a group.')
+  }
 }
 
 async function refreshMetrics(tx: Transaction, groupId: string) {
@@ -326,8 +333,8 @@ export async function savePreferences(userId: string, groupId: string, preferenc
     if (!group.members.some((member) => member.studentId === studentId)) {
       throw new ApiError(403, 'NOT_A_GROUP_MEMBER', 'Only a group member can edit preferences.')
     }
-    if (group.status !== GroupStatus.FORMING) {
-      throw new ApiError(409, 'INVALID_GROUP_STATE', 'Preferences cannot be edited after submission.')
+    if (group.status !== GroupStatus.FORMING && group.status !== GroupStatus.SUBMITTED) {
+      throw new ApiError(409, 'INVALID_GROUP_STATE', 'Preferences cannot be edited after allocation.')
     }
     const rooms = await tx.room.findMany({
       where: { id: { in: preferences } },
