@@ -30,6 +30,11 @@ export const applicationUpdateSchema = z.object({
   }
 })
 
+export async function getStudentApplication(request: NextRequest) {
+  const actor = await requireRole(request, ['STUDENT'])
+  return applications.getApplicationStatus(actor.id)
+}
+
 export async function submitStudentApplication(request: NextRequest, input: unknown) {
   const actor = await requireRole(request, ['STUDENT'])
   const parsed = studentSubmissionSchema.parse(input)

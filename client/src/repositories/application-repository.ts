@@ -3,6 +3,21 @@ import { prisma } from '@/lib/prisma'
 import { ApiError } from '@/services/api-error'
 import { serializableTransaction } from '@/repositories/transaction'
 
+export async function getApplicationStatus(userId: string) {
+  const student = await prisma.student.findUnique({
+    where: { userId },
+    select: { id: true, application: true },
+  })
+  if (!student) throw new ApiError(404, 'STUDENT_NOT_FOUND', 'No student profile exists for this account.')
+
+  const application = await prisma.application.upsert({
+    where: { studentId: student.id },
+    create: { studentId: student.id, status: ApplicationStatus.DRAFT, documents: {} },
+    update: {},
+  })
+  return application
+}
+
 interface ApplicationSubmission {
   phone: string
   address: {

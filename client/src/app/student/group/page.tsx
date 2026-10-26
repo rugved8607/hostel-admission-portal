@@ -308,7 +308,7 @@ export default function StudentGroupPage() {
                     application. Current status: <strong>{student?.status.replace(/_/g, ' ') ?? 'unknown'}</strong>.
                   </p>
                   <Link
-                    href="/student/status"
+                    href="/student/apply"
                     className="inline-block mt-2 text-xs font-semibold text-amber-800 underline hover:text-amber-900"
                   >
                     Check application status →

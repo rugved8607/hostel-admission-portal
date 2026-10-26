@@ -196,6 +196,15 @@ function mapGroup(payload: unknown): StudentGroup {
   }
 }
 
+function mapApplicationStatus(status: unknown): StudentStatus {
+  switch (status) {
+    case 'SUBMITTED': return 'application_submitted'
+    case 'APPROVED': return 'approved'
+    case 'REJECTED': return 'rejected'
+    default: return 'draft'
+  }
+}
+
 function mapApplication(student: StudentProfile, payload?: unknown): Application {
   const value = object(payload)
   const documents = object(value.documents)
@@ -233,7 +242,7 @@ function mapApplication(student: StudentProfile, payload?: unknown): Application
       hostelIdCard: null,
       otherDocs: [],
     },
-    status: student.status,
+    status: mapApplicationStatus(value.status),
     submittedAt: typeof value.submittedAt === 'string' ? value.submittedAt : null,
     adminRemarks: typeof value.adminRemarks === 'string' ? value.adminRemarks : '',
     correctionNotes: String(documents.correctionNotes ?? ''),
@@ -319,8 +328,9 @@ export function MockDataProvider({ children }: { children: ReactNode }) {
     setError(null)
     try {
       if (session.role === 'student') {
-        const [profile, ownGroup, rawRooms, rawOpenGroups] = await Promise.all([
+        const [profile, applicationPayload, ownGroup, rawRooms, rawOpenGroups] = await Promise.all([
           api<Record<string, unknown>>('/api/students/me'),
+          api<Record<string, unknown>>('/api/applications/me'),
           api<GroupStatusPayload>('/api/groups/me'),
           api<unknown[]>('/api/rooms'),
           api<unknown[]>('/api/groups/open'),
@@ -330,7 +340,7 @@ export function MockDataProvider({ children }: { children: ReactNode }) {
           current && current.userId !== student.id ? { ...current, userId: student.id } : current,
         )
         setStudents([student])
-        setApplications([mapApplication(student, profile.application)])
+        setApplications([mapApplication(student, applicationPayload)])
         setRooms(rawRooms.map(mapRoom))
         setRoundHistory([])
         setUnallottedStudents([])

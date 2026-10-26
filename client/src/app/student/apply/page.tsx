@@ -16,6 +16,9 @@ export default function StudentApplyPage() {
   const [documentStates, setDocumentStates] = useState<Record<string, 'Uploading' | 'Uploaded' | string>>({});
   const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
   const application = applications.find((item) => item.studentId === currentStudent?.id)
+  const applicationStatus = application?.status ?? 'draft'
+  const approved = applicationStatus === 'approved'
+  const rejected = applicationStatus === 'rejected'
 
   const [formData, setFormData] = useState({
     name: student?.name ?? '',
@@ -106,6 +109,14 @@ export default function StudentApplyPage() {
 
         {(error || formError) && (
           <div className="rounded border border-red-200 bg-red-50 p-3 text-xs text-red-700">{formError ?? error}</div>
+        )}
+        {applicationStatus && (
+          <div className={`rounded border p-3 text-xs ${approved ? 'border-emerald-200 bg-emerald-50 text-emerald-800' : rejected ? 'border-red-200 bg-red-50 text-red-700' : 'border-slate-200 bg-white text-slate-600'}`}>
+            <strong>Application Status: </strong>
+            {approved ? 'Approved' : rejected ? 'Rejected' : applicationStatus === 'application_submitted' ? 'Submitted' : 'Draft'}
+            {rejected && application?.adminRemarks ? <span className="block mt-1">Admin remarks: {application.adminRemarks}</span> : null}
+            {approved ? <span className="block mt-1">This application is approved and can no longer be edited or resubmitted.</span> : null}
+          </div>
         )}
         {!student && (
           <div className="rounded border border-slate-200 bg-white p-6 text-center text-xs text-slate-500">
@@ -266,10 +277,10 @@ export default function StudentApplyPage() {
               </div>
               <button
                 type="submit"
-                disabled={!student || submitting}
+                disabled={!student || submitting || approved}
                 className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded text-xs font-semibold transition-colors disabled:opacity-50"
               >
-                {submitting ? 'Submitting…' : 'Submit Application'}
+                {submitting ? 'Submitting…' : approved ? 'Application Approved' : rejected ? 'Resubmit Application' : 'Submit Application'}
               </button>
             </div>
           </form>
